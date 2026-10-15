@@ -174,4 +174,40 @@ describe("PermissionService & buildTempPermissionOverwrites", () => {
     expect(overwrites.some((o: any) => o.id === guildId)).toBe(true);
     expect(overwrites.some((o: any) => o.id === quarantineId)).toBe(true);
   });
+
+  it("buildPrivateJtcRoomOverwrites applies owner, trusted, and blocked overwrites accurately", () => {
+    const permissionsConfig = buildPermissionsConfig();
+    const jtcConfig = buildJtcConfig();
+    const service = new PermissionService(permissionsConfig, jtcConfig.permissions);
+
+    const overwrites = service.buildPrivateJtcRoomOverwrites({
+      guildId,
+      ownerId: "owner-99",
+      trustedUserIds: ["trusted-user-1", "blocked-and-trusted"],
+      blockedUserIds: ["blocked-user-1", "blocked-and-trusted"],
+    });
+
+    // 1. Owner has allowed permissions
+    const ownerOverwrite: any = overwrites.find((o: any) => o.id === "owner-99");
+    expect(ownerOverwrite).toBeDefined();
+    expect(ownerOverwrite.type).toBe(OverwriteType.Member);
+    expect(ownerOverwrite.allow).toContain(PermissionFlagsBits.Connect);
+
+    // 2. Trusted user has allowed permissions
+    const trustedOverwrite: any = overwrites.find((o: any) => o.id === "trusted-user-1");
+    expect(trustedOverwrite).toBeDefined();
+    expect(trustedOverwrite.allow).toContain(PermissionFlagsBits.Connect);
+
+    // 3. Blocked user has Connect denied
+    const blockedOverwrite: any = overwrites.find((o: any) => o.id === "blocked-user-1");
+    expect(blockedOverwrite).toBeDefined();
+    expect(blockedOverwrite.type).toBe(OverwriteType.Member);
+    expect(blockedOverwrite.deny).toEqual([PermissionFlagsBits.Connect]);
+
+    // 4. User who is both blocked and trusted is treated as BLOCKED (Connect denied, not allowed)
+    const conflictOverwrite: any = overwrites.find((o: any) => o.id === "blocked-and-trusted");
+    expect(conflictOverwrite).toBeDefined();
+    expect(conflictOverwrite.deny).toEqual([PermissionFlagsBits.Connect]);
+    expect(conflictOverwrite.allow).toEqual([]);
+  });
 });

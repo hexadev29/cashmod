@@ -162,6 +162,7 @@ export class PrivateJtcService {
 
     const current = this.userProfiles.get(operatorId) ?? {
       trustedUserIds: [],
+      blockedUserIds: [],
     };
 
     const updates = updater(current);
@@ -192,6 +193,7 @@ export class PrivateJtcService {
           createdAt: rec.createdAt,
           joinHistory: rec.joinHistory,
           trustedUserIds: [], // do not persist transferred owner's trusted list
+          blockedUserIds: [],
           settings: {}, // do not persist transferred owner's settings
         };
       } else {
@@ -284,8 +286,9 @@ export class PrivateJtcService {
             continue;
           }
 
-          // Ensure trustedUserIds and settings are initialized
+          // Ensure trustedUserIds, blockedUserIds and settings are initialized
           record.trustedUserIds = record.trustedUserIds ?? [];
+          record.blockedUserIds = record.blockedUserIds ?? [];
           record.settings = record.settings ?? {};
           record.originalOwnerId = record.originalOwnerId ?? record.ownerId;
           record.isTransferred = record.isTransferred ?? false;
@@ -357,6 +360,7 @@ export class PrivateJtcService {
           guildId: member.guild.id,
           ownerId: member.id,
           trustedUserIds: savedProfile?.trustedUserIds ?? [],
+          blockedUserIds: savedProfile?.blockedUserIds ?? [],
           locked: savedProfile?.locked ?? false,
           hidden: savedProfile?.hidden ?? false,
           chatDisabled: savedProfile?.chatDisabled ?? false,
@@ -407,6 +411,9 @@ export class PrivateJtcService {
         ],
         trustedUserIds: savedProfile?.trustedUserIds
           ? [...savedProfile.trustedUserIds]
+          : [],
+        blockedUserIds: savedProfile?.blockedUserIds
+          ? [...savedProfile.blockedUserIds]
           : [],
         settings: {
           name: roomName,
@@ -481,7 +488,18 @@ export class PrivateJtcService {
       return;
     }
 
-    // 2. Check over-capacity collision
+    // 2. Check if member is blocked from this room
+    if (record.blockedUserIds?.includes(member.id)) {
+      this.log.info(
+        `Blocked member "${member.user.tag}" (${member.id}) attempted to join private room "${channel.name}" (${channel.id}). Disconnecting member.`,
+      );
+      if (member.voice) {
+        await member.voice.disconnect("Blocked from this private room").catch(() => {});
+      }
+      return;
+    }
+
+    // 3. Check over-capacity collision
     const capacityLimit = record.settings?.userLimit ?? channel.userLimit ?? 0;
     const isMemberInCache =
       typeof (channel.members as any)?.has === "function"
@@ -840,12 +858,14 @@ export class PrivateJtcService {
       Connect: false,
     });
 
-    // Ensure all trusted users have explicit Connect: true
+    // Ensure all trusted users have explicit Connect: true (unless blocked)
     for (const trustedId of record.trustedUserIds) {
-      await channel.permissionOverwrites.edit(trustedId, {
-        Connect: true,
-        ViewChannel: true,
-      });
+      if (!record.blockedUserIds?.includes(trustedId)) {
+        await channel.permissionOverwrites.edit(trustedId, {
+          Connect: true,
+          ViewChannel: true,
+        });
+      }
     }
 
     record.settings = { ...record.settings, locked: true };
@@ -906,10 +926,12 @@ export class PrivateJtcService {
     });
 
     for (const trustedId of record.trustedUserIds) {
-      await channel.permissionOverwrites.edit(trustedId, {
-        ViewChannel: true,
-        Connect: true,
-      });
+      if (!record.blockedUserIds?.includes(trustedId)) {
+        await channel.permissionOverwrites.edit(trustedId, {
+          ViewChannel: true,
+          Connect: true,
+        });
+      }
     }
 
     record.settings = { ...record.settings, hidden: true };
@@ -995,11 +1017,16 @@ export class PrivateJtcService {
     }
 
     record.trustedUserIds = record.trustedUserIds ?? [];
+    record.blockedUserIds = record.blockedUserIds ?? [];
     const added: string[] = [];
 
     for (const uid of userIds) {
       if (uid === operatorId || record.trustedUserIds.includes(uid)) {
         continue;
+      }
+      // If user was previously blocked, remove from blocked list
+      if (record.blockedUserIds.includes(uid)) {
+        record.blockedUserIds = record.blockedUserIds.filter((id) => id !== uid);
       }
       record.trustedUserIds.push(uid);
       added.push(uid);
@@ -1013,6 +1040,7 @@ export class PrivateJtcService {
     if (added.length > 0) {
       this.updateOwnerProfile(record, operatorId, () => ({
         trustedUserIds: [...record.trustedUserIds],
+        blockedUserIds: [...(record.blockedUserIds ?? [])],
       }));
       await this.saveCurrentState(channel.guild.id);
       this.log.info(
@@ -1058,6 +1086,114 @@ export class PrivateJtcService {
       await this.saveCurrentState(channel.guild.id);
       this.log.info(
         `Owner ${operatorId} untrusted ${removed.length} user(s) in room ${channel.id}: ${removed.join(", ")}`,
+      );
+    }
+
+    return removed;
+  }
+
+  /**
+   * Blocks one or more users from connecting to the private voice channel.
+   * If a blocked user is currently in the channel, they are disconnected immediately.
+   */
+  public async blockUsers(
+    channel: VoiceChannel,
+    userIds: string[],
+    operatorId: string,
+  ): Promise<string[]> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return [];
+    }
+
+    record.blockedUserIds = record.blockedUserIds ?? [];
+    record.trustedUserIds = record.trustedUserIds ?? [];
+    const added: string[] = [];
+
+    for (const uid of userIds) {
+      if (uid === operatorId || record.blockedUserIds.includes(uid)) {
+        continue;
+      }
+      record.blockedUserIds.push(uid);
+      added.push(uid);
+
+      // If they were trusted, remove them from trustedUserIds
+      if (record.trustedUserIds.includes(uid)) {
+        record.trustedUserIds = record.trustedUserIds.filter((id) => id !== uid);
+      }
+
+      // Explicitly deny Connect permission
+      await channel.permissionOverwrites.edit(uid, {
+        Connect: false,
+      });
+
+      // If the blocked user is currently inside this channel, disconnect them
+      const targetMember = channel.members.get(uid);
+      if (targetMember && targetMember.voice) {
+        await targetMember.voice
+          .disconnect("Blocked by private room owner")
+          .catch(() => {});
+      }
+    }
+
+    if (added.length > 0) {
+      this.updateOwnerProfile(record, operatorId, () => ({
+        blockedUserIds: [...record.blockedUserIds!],
+        trustedUserIds: [...record.trustedUserIds],
+      }));
+      await this.saveCurrentState(channel.guild.id);
+      this.log.info(
+        `Owner ${operatorId} blocked ${added.length} user(s) in room ${channel.id}: ${added.join(", ")}`,
+      );
+    }
+
+    return added;
+  }
+
+  /**
+   * Unblocks one or more users from the private voice channel.
+   */
+  public async unblockUsers(
+    channel: VoiceChannel,
+    userIds: string[],
+    operatorId: string,
+  ): Promise<string[]> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return [];
+    }
+
+    record.blockedUserIds = record.blockedUserIds ?? [];
+    const removed: string[] = [];
+
+    for (const uid of userIds) {
+      if (!record.blockedUserIds.includes(uid)) {
+        continue;
+      }
+      record.blockedUserIds = record.blockedUserIds.filter((id) => id !== uid);
+      removed.push(uid);
+
+      if (uid !== record.ownerId) {
+        if (record.trustedUserIds?.includes(uid)) {
+          await channel.permissionOverwrites
+            .edit(uid, {
+              Connect: true,
+              ViewChannel: true,
+            })
+            .catch(() => {});
+        } else {
+          await channel.permissionOverwrites.delete(uid).catch(() => {});
+        }
+      }
+    }
+
+    if (removed.length > 0) {
+      this.updateOwnerProfile(record, operatorId, () => ({
+        blockedUserIds: [...record.blockedUserIds!],
+      }));
+      await this.saveCurrentState(channel.guild.id);
+      this.log.info(
+        `Owner ${operatorId} unblocked ${removed.length} user(s) in room ${channel.id}: ${removed.join(", ")}`,
       );
     }
 

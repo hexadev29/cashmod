@@ -43,6 +43,7 @@ describe("PrivateJtcInteractionManager (Domain Module)", () => {
             guildId,
             ownerId,
             trustedUserIds: ["trusted-1"],
+            blockedUserIds: ["blocked-1"],
           };
         }
         return undefined;
@@ -56,6 +57,8 @@ describe("PrivateJtcInteractionManager (Domain Module)", () => {
       toggleChat: vi.fn().mockResolvedValue(true),
       trustUsers: vi.fn().mockResolvedValue(["trusted-2"]),
       untrustUsers: vi.fn().mockResolvedValue(["trusted-1"]),
+      blockUsers: vi.fn().mockResolvedValue(["blocked-2"]),
+      unblockUsers: vi.fn().mockResolvedValue(["blocked-1"]),
       transferOwnership: vi.fn().mockResolvedValue(true),
       kickMember: vi.fn().mockResolvedValue(true),
     };
@@ -225,5 +228,61 @@ describe("PrivateJtcInteractionManager (Domain Module)", () => {
     } as any;
     await manager.handleInteraction(untrustSelect);
     expect(mockService.untrustUsers).toHaveBeenCalledWith(mockChannel, ["trusted-1"], ownerId);
+
+    // 5. Block user select
+    const blockSelect = {
+      customId: "pjtc:block_select",
+      user: { id: ownerId },
+      channel: mockChannel,
+      isButton: () => false,
+      isModalSubmit: () => false,
+      isUserSelectMenu: () => true,
+      isStringSelectMenu: () => false,
+      values: ["blocked-2"],
+      reply: vi.fn().mockResolvedValue(undefined),
+    } as any;
+    await manager.handleInteraction(blockSelect);
+    expect(mockService.blockUsers).toHaveBeenCalledWith(mockChannel, ["blocked-2"], ownerId);
+
+    // 6. Unblock string select
+    const unblockSelect = {
+      customId: "pjtc:unblock_select",
+      user: { id: ownerId },
+      channel: mockChannel,
+      isButton: () => false,
+      isModalSubmit: () => false,
+      isUserSelectMenu: () => false,
+      isStringSelectMenu: () => true,
+      values: ["blocked-1"],
+      reply: vi.fn().mockResolvedValue(undefined),
+    } as any;
+    await manager.handleInteraction(unblockSelect);
+    expect(mockService.unblockUsers).toHaveBeenCalledWith(mockChannel, ["blocked-1"], ownerId);
+  });
+
+  it("handles block and unblock button clicks and unblock pagination navigation", async () => {
+    const blockBtn = createMockButtonInteraction({ customId: "pjtc:block", userId: ownerId });
+    await manager.handleInteraction(blockBtn);
+    expect(blockBtn.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("Select user(s) to block"),
+        ephemeral: true,
+      }),
+    );
+
+    const unblockBtn = createMockButtonInteraction({ customId: "pjtc:unblock", userId: ownerId });
+    await manager.handleInteraction(unblockBtn);
+    expect(unblockBtn.reply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ephemeral: true,
+      }),
+    );
+
+    const pageBtn = createMockButtonInteraction({
+      customId: `pjtc:unblock_page:${channelId}:2`,
+      userId: ownerId,
+    });
+    await manager.handleInteraction(pageBtn);
+    expect(pageBtn.update).toHaveBeenCalled();
   });
 });

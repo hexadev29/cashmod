@@ -33,8 +33,10 @@ export const formatEmoji = (
     }
   }
 
+  const emojiName = name === "block" ? "cross" : name;
+
   // Standard Discord custom emoji markdown
-  return `<:${name}:${idOrTag}>`;
+  return `<:${emojiName}:${idOrTag}>`;
 };
 
 /**
@@ -46,6 +48,8 @@ export const resolveButtonEmoji = (
   idOrTag: string,
   client?: Client | null,
 ): ComponentEmojiResolvable => {
+  const emojiName = name === "block" ? "cross" : name;
+
   if (client) {
     const cached =
       client.emojis?.cache?.get(idOrTag) ??
@@ -53,7 +57,7 @@ export const resolveButtonEmoji = (
     if (cached) {
       return {
         id: cached.id,
-        name: cached.name ?? name,
+        name: cached.name ?? emojiName,
         animated: cached.animated ?? false,
       };
     }
@@ -74,7 +78,7 @@ export const resolveButtonEmoji = (
   }
 
   if (/^\d+$/.test(idOrTag)) {
-    return { id: idOrTag, name };
+    return { id: idOrTag, name: emojiName };
   }
 
   return idOrTag;

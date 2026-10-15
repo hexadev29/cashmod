@@ -32,6 +32,7 @@ export interface PrivateJtcOverwriteOptions {
   ownerId: string;
   roles?: JtcRoleIds;
   trustedUserIds?: string[];
+  blockedUserIds?: string[];
   locked?: boolean;
   hidden?: boolean;
   chatDisabled?: boolean;
@@ -165,7 +166,16 @@ export class PermissionService {
   public buildPrivateJtcRoomOverwrites(
     options: PrivateJtcOverwriteOptions,
   ): OverwriteResolvable[] {
-    const { guildId, ownerId, roles, trustedUserIds, locked, hidden, chatDisabled } = options;
+    const {
+      guildId,
+      ownerId,
+      roles,
+      trustedUserIds,
+      blockedUserIds,
+      locked,
+      hidden,
+      chatDisabled,
+    } = options;
     const everyonePolicy =
       this.permissionsConfig.policies.privateEveryone ??
       this.permissionsConfig.policies.everyone;
@@ -256,10 +266,14 @@ export class PermissionService {
       deny: ownerPolicy.deny,
     });
 
-    // 4. Trusted users member overwrites
+    // 4. Trusted users member overwrites (excluding blocked users & owner)
     if (trustedUserIds && trustedUserIds.length > 0) {
       for (const trustedId of trustedUserIds) {
-        if (trustedId && trustedId !== ownerId) {
+        if (
+          trustedId &&
+          trustedId !== ownerId &&
+          !blockedUserIds?.includes(trustedId)
+        ) {
           overwrites.push({
             id: trustedId,
             type: OverwriteType.Member,
@@ -269,6 +283,20 @@ export class PermissionService {
               PermissionFlagsBits.SendMessages,
             ],
             deny: [],
+          });
+        }
+      }
+    }
+
+    // 5. Blocked users member overwrites (deny Connect; takes precedence over @everyone allow)
+    if (blockedUserIds && blockedUserIds.length > 0) {
+      for (const blockedId of blockedUserIds) {
+        if (blockedId && blockedId !== ownerId) {
+          overwrites.push({
+            id: blockedId,
+            type: OverwriteType.Member,
+            allow: [],
+            deny: [PermissionFlagsBits.Connect],
           });
         }
       }

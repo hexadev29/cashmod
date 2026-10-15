@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildPrivateInterfaceMessage,
   buildUntrustPaginationPayload,
+  buildUnblockPaginationPayload,
   UNTRUST_PAGE_SIZE,
 } from "../../../src/modules/private-jtc/private-interface-builder.js";
 import {
@@ -33,7 +34,7 @@ describe("private-interface-builder", () => {
     expect(embed.data.color).toBe(0x2b2d31);
     expect(embed.data.image?.url).toBe("attachment://vc_interface.png");
 
-    expect(payload.components).toHaveLength(3);
+    expect(payload.components).toHaveLength(4);
 
     // Row 1: Rename, Limit, Lock, Unlock
     const row1 = payload.components![0] as ActionRowBuilder<ButtonBuilder>;
@@ -91,6 +92,17 @@ describe("private-interface-builder", () => {
     expect(row3.components[3].data.custom_id).toBe("pjtc:kick");
     expect(row3.components[3].data.label).toBeUndefined();
     expect(row3.components[3].data.emoji?.id).toBe(defaultPrivateJtcEmojis.kick);
+
+    // Row 4: Block, Unblock
+    const row4 = payload.components![3] as ActionRowBuilder<ButtonBuilder>;
+    expect(row4.components).toHaveLength(2);
+    expect(row4.components[0].data.custom_id).toBe("pjtc:block");
+    expect(row4.components[0].data.label).toBeUndefined();
+    expect(row4.components[0].data.emoji?.id).toBe(defaultPrivateJtcEmojis.block);
+
+    expect(row4.components[1].data.custom_id).toBe("pjtc:unblock");
+    expect(row4.components[1].data.label).toBeUndefined();
+    expect(row4.components[1].data.emoji?.id).toBe(defaultPrivateJtcEmojis.unblock);
   });
 
   describe("buildUntrustPaginationPayload", () => {
@@ -142,6 +154,30 @@ describe("private-interface-builder", () => {
       expect(navRow2.components[0].data.disabled).toBe(false); // Prev enabled
       expect(navRow2.components[0].data.custom_id).toBe("pjtc:untrust_page:vc-1:1");
       expect(navRow2.components[2].data.disabled).toBe(true); // Next disabled on page 2
+    });
+  });
+
+  describe("buildUnblockPaginationPayload", () => {
+    it("handles empty blocked list gracefully", () => {
+      const payload = buildUnblockPaginationPayload("vc-1", [], 1, defaultPrivateJtcEmojis);
+      expect(payload.content).toContain(defaultPrivateJtcEmojis.cross);
+      expect(payload.components).toHaveLength(0);
+    });
+
+    it("paginates blocked lists > 25 users into pages of 25 with Prev/Next buttons", () => {
+      const users = Array.from({ length: 30 }, (_, i) => ({
+        id: `blocked-${i + 1}`,
+        tag: `Blocked${i + 1}#0001`,
+      }));
+
+      const page1 = buildUnblockPaginationPayload("vc-1", users, 1, defaultPrivateJtcEmojis);
+      expect(page1.components).toHaveLength(2);
+      expect(page1.content).toContain(defaultPrivateJtcEmojis.unblock);
+
+      const navRow1 = page1.components[1] as ActionRowBuilder<ButtonBuilder>;
+      expect(navRow1.components[0].data.disabled).toBe(true);
+      expect(navRow1.components[2].data.disabled).toBe(false);
+      expect(navRow1.components[2].data.custom_id).toBe("pjtc:unblock_page:vc-1:2");
     });
   });
 });

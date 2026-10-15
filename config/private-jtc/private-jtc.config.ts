@@ -13,6 +13,8 @@ export interface PrivateJtcEmojisConfig {
   hide: string;
   cross: string;
   chat: string;
+  block: string;
+  unblock: string;
 }
 
 export const defaultPrivateJtcEmojis: PrivateJtcEmojisConfig = {
@@ -30,6 +32,8 @@ export const defaultPrivateJtcEmojis: PrivateJtcEmojisConfig = {
   hide: "1560263525065171054",
   cross: "1560263522972340264",
   chat: "1560263520803758120",
+  block: "1560263522972340264",
+  unblock: "1560329416268058674",
 };
 
 import type { JtcCleanupConfig, JtcQueueConfig } from "../jtc/jtc.config.js";
@@ -90,22 +94,7 @@ export const buildPrivateJtcConfig = (
       taskTimeoutMs: 15000,
       enableEmptyRoomRecycling: false,
     },
-    emojis: {
-      untrust: env.EMOJI_UNTRUST_ID ?? defaultPrivateJtcEmojis.untrust,
-      unlock: env.EMOJI_UNLOCK_ID ?? defaultPrivateJtcEmojis.unlock,
-      unhide: env.EMOJI_UNHIDE_ID ?? defaultPrivateJtcEmojis.unhide,
-      trust: env.EMOJI_TRUST_ID ?? defaultPrivateJtcEmojis.trust,
-      transfer: env.EMOJI_TRANSFER_ID ?? defaultPrivateJtcEmojis.transfer,
-      success: env.EMOJI_SUCCESS_ID ?? defaultPrivateJtcEmojis.success,
-      rename: env.EMOJI_RENAME_ID ?? defaultPrivateJtcEmojis.rename,
-      lock: env.EMOJI_LOCK_ID ?? defaultPrivateJtcEmojis.lock,
-      limit: env.EMOJI_LIMIT_ID ?? defaultPrivateJtcEmojis.limit,
-      kick: env.EMOJI_KICK_ID ?? defaultPrivateJtcEmojis.kick,
-      invite: env.EMOJI_INVITE_ID ?? defaultPrivateJtcEmojis.invite,
-      hide: env.EMOJI_HIDE_ID ?? defaultPrivateJtcEmojis.hide,
-      cross: env.EMOJI_CROSS_ID ?? defaultPrivateJtcEmojis.cross,
-      chat: env.EMOJI_CHAT_ID ?? defaultPrivateJtcEmojis.chat,
-    },
+    emojis: { ...defaultPrivateJtcEmojis },
   };
 };
 

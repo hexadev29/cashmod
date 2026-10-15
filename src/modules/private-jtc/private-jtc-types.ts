@@ -18,6 +18,7 @@ export interface PrivateJtcUserProfile {
   hidden?: boolean;
   chatDisabled?: boolean;
   trustedUserIds?: string[];
+  blockedUserIds?: string[];
   updatedAt?: string;
 }
 
@@ -31,6 +32,7 @@ export interface PrivateJtcRoomRecord {
   createdAt: string; // ISO 8601 string
   joinHistory: PrivateJtcUserPresence[];
   trustedUserIds: string[];
+  blockedUserIds?: string[];
   interfaceMessageId?: string;
   settings?: PrivateJtcRoomSettings;
 }

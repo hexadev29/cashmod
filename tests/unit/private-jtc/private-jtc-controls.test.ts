@@ -287,6 +287,71 @@ describe("PrivateJtcService — Room Controls & Transferred Ownership Persistenc
     expect(kickSelf).toBe(false);
   });
 
+  it("handles block and unblock of users, disconnecting occupants and persisting across profiles", async () => {
+    const channel = createMockVoiceChannel({
+      id: "vc-1",
+      name: "john's Room",
+      ownerId: "owner-1",
+    });
+
+    const mockOccupant = {
+      id: "user-blocked",
+      user: { tag: "BlockedUser#0001" },
+      voice: {
+        disconnect: vi.fn().mockResolvedValue(true),
+      },
+    } as unknown as GuildMember;
+
+    channel.members.set("user-blocked", mockOccupant);
+
+    (service as any).managedRooms.set("vc-1", {
+      channelId: "vc-1",
+      guildId,
+      categoryId: dynamicCategoryId,
+      ownerId: "owner-1",
+      originalOwnerId: "owner-1",
+      isTransferred: false,
+      createdAt: new Date().toISOString(),
+      joinHistory: [{ userId: "owner-1", joinedAt: new Date().toISOString() }],
+      trustedUserIds: ["user-blocked"], // initially trusted
+      blockedUserIds: [],
+      settings: {},
+    });
+
+    // 1. Owner blocks user-blocked
+    const added = await service.blockUsers(channel, ["user-blocked"], "owner-1");
+    expect(added).toEqual(["user-blocked"]);
+
+    const record = service.getManagedRoom("vc-1");
+    expect(record?.blockedUserIds).toEqual(["user-blocked"]);
+    // Should have been removed from trustedUserIds
+    expect(record?.trustedUserIds).not.toContain("user-blocked");
+
+    // Overwrite set to Connect: false
+    expect(channel.permissionOverwrites.edit).toHaveBeenCalledWith("user-blocked", {
+      Connect: false,
+    });
+
+    // Occupant was in the channel, so disconnect must have been called
+    expect(mockOccupant.voice.disconnect).toHaveBeenCalledWith("Blocked by private room owner");
+
+    // Profile was updated
+    const profile = (service as any).userProfiles.get("owner-1");
+    expect(profile?.blockedUserIds).toEqual(["user-blocked"]);
+
+    // 2. Direct join attempt by blocked member gets immediately disconnected
+    await service.handleMemberJoin(mockOccupant, channel);
+    expect(mockOccupant.voice.disconnect).toHaveBeenCalledWith("Blocked from this private room");
+
+    // 3. Owner unblocks user-blocked
+    const removed = await service.unblockUsers(channel, ["user-blocked"], "owner-1");
+    expect(removed).toEqual(["user-blocked"]);
+    expect(record?.blockedUserIds).toEqual([]);
+    expect(channel.permissionOverwrites.delete).toHaveBeenCalledWith("user-blocked");
+    const updatedProfile = (service as any).userProfiles.get("owner-1");
+    expect(updatedProfile?.blockedUserIds).toEqual([]);
+  });
+
   it("enforces transferred ownership persistence rule: changes under transferred ownership are NOT saved to disk", async () => {
     const channel = createMockVoiceChannel({
       id: "vc-1",

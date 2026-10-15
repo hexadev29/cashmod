@@ -13,7 +13,10 @@ import type {
   PrivateJtcEmojisConfig,
 } from "../../../config/private-jtc/private-jtc.config.js";
 import type { PrivateJtcService } from "./private-jtc-service.js";
-import { buildUntrustPaginationPayload } from "./private-interface-builder.js";
+import {
+  buildUntrustPaginationPayload,
+  buildUnblockPaginationPayload,
+} from "./private-interface-builder.js";
 import { formatEmoji } from "./private-emoji-helper.js";
 import { logger } from "../../diagnostics/logger.js";
 
@@ -346,6 +349,54 @@ export class PrivateJtcInteractionManager {
         });
         return;
       }
+
+      case "pjtc:block": {
+        const select = new UserSelectMenuBuilder()
+          .setCustomId("pjtc:block_select")
+          .setPlaceholder("Select user(s) to block...")
+          .setMinValues(1)
+          .setMaxValues(10);
+
+        const row = new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(
+          select,
+        );
+
+        await interaction.reply({
+          content: `${this.emoji("block", interaction)} Select user(s) to block from this room (they will not be able to join even when the room is public):`,
+          components: [row],
+          ephemeral: true,
+        });
+        return;
+      }
+
+      case "pjtc:unblock": {
+        const blockedIds = record.blockedUserIds ?? [];
+        const displays = await Promise.all(
+          blockedIds.map(async (id: string) => {
+            const member = await channel.guild.members
+              .fetch(id)
+              .catch(() => null);
+            return {
+              id,
+              tag: member?.user?.tag ?? `User (${id})`,
+            };
+          }),
+        );
+
+        const payload = buildUnblockPaginationPayload(
+          channel.id,
+          displays,
+          1,
+          this.config.emojis,
+          interaction.client,
+        );
+        await interaction.reply({
+          content: payload.content,
+          components: payload.components,
+          ephemeral: true,
+        });
+        return;
+      }
     }
 
     // Untrust pagination button navigation: pjtc:untrust_page:<channelId>:<page>
@@ -375,6 +426,37 @@ export class PrivateJtcInteractionManager {
         content: payload.content,
         components: payload.components,
       });
+      return;
+    }
+
+    // Unblock pagination button navigation: pjtc:unblock_page:<channelId>:<page>
+    if (customId.startsWith("pjtc:unblock_page:")) {
+      const parts = customId.split(":");
+      const targetPage = parseInt(parts[3], 10) || 1;
+
+      const blockedIds = record.blockedUserIds ?? [];
+      const displays = await Promise.all(
+        blockedIds.map(async (id: string) => {
+          const member = await channel.guild.members.fetch(id).catch(() => null);
+          return {
+            id,
+            tag: member?.user?.tag ?? `User (${id})`,
+          };
+        }),
+      );
+
+      const payload = buildUnblockPaginationPayload(
+        channel.id,
+        displays,
+        targetPage,
+        this.config.emojis,
+        interaction.client,
+      );
+      await interaction.update({
+        content: payload.content,
+        components: payload.components,
+      });
+      return;
     }
   }
 
@@ -451,6 +533,20 @@ export class PrivateJtcInteractionManager {
       return;
     }
 
+    if (customId === "pjtc:block_select") {
+      const selectedUserIds: string[] = interaction.values;
+      const added = await this.service.blockUsers(
+        channel,
+        selectedUserIds,
+        interaction.user.id,
+      );
+      await interaction.reply({
+        content: `${this.emoji("success", interaction)} Successfully blocked **${added.length}** member(s). They will not be able to join this room.`,
+        ephemeral: true,
+      });
+      return;
+    }
+
     if (customId === "pjtc:transfer_select") {
       const newOwnerId = interaction.values[0];
       if (newOwnerId === interaction.user.id) {
@@ -494,6 +590,20 @@ export class PrivateJtcInteractionManager {
       );
       await interaction.reply({
         content: `${this.emoji("success", interaction)} Successfully untrusted **${removed.length}** member(s).`,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (customId.startsWith("pjtc:unblock_select")) {
+      const selectedUserIds: string[] = interaction.values;
+      const removed = await this.service.unblockUsers(
+        channel,
+        selectedUserIds,
+        interaction.user.id,
+      );
+      await interaction.reply({
+        content: `${this.emoji("success", interaction)} Successfully unblocked **${removed.length}** member(s).`,
         ephemeral: true,
       });
       return;

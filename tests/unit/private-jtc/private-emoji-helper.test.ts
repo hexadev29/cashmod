@@ -7,6 +7,9 @@ describe("private-emoji-helper", () => {
     it("formats raw snowflake ID with emoji name as <:name:id>", () => {
       const formatted = formatEmoji("success", "1560263538138677418");
       expect(formatted).toBe("<:success:1560263538138677418>");
+
+      const blockFormatted = formatEmoji("block", "1560263522972340264");
+      expect(blockFormatted).toBe("<:cross:1560263522972340264>");
     });
 
     it("preserves already formatted custom emoji tags", () => {
@@ -108,6 +111,23 @@ describe("private-emoji-helper", () => {
         id: "1560263542421069915",
         name: "guild_trust",
         animated: false,
+      });
+    });
+
+    it("resolves block emoji using cross name fallback", () => {
+      const resolved = resolveButtonEmoji("block", "1560263522972340264");
+      expect(resolved).toEqual({
+        id: "1560263522972340264",
+        name: "cross",
+      });
+    });
+
+    it("resolves unblock emoji <:unblock:1560329416268058674> accurately", () => {
+      const resolved = resolveButtonEmoji("unblock", "<:unblock:1560329416268058674>");
+      expect(resolved).toEqual({
+        animated: false,
+        name: "unblock",
+        id: "1560329416268058674",
       });
     });
   });

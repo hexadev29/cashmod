@@ -110,10 +110,22 @@ export const buildPrivateInterfaceMessage = (
       .setEmoji(resolveButtonEmoji("kick", emojis.kick, client)),
   );
 
+  // Row 4: Block, Unblock
+  const row4 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("pjtc:block")
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji(resolveButtonEmoji("block", emojis.block, client)),
+    new ButtonBuilder()
+      .setCustomId("pjtc:unblock")
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji(resolveButtonEmoji("unblock", emojis.unblock, client)),
+  );
+
   return {
     embeds: [embed],
     files,
-    components: [row1, row2, row3],
+    components: [row1, row2, row3, row4],
   };
 };
 
@@ -195,6 +207,95 @@ export const buildUntrustPaginationPayload = (
 
   return {
     content: `${formatEmoji("untrust", emojis.untrust, client)} Select member(s) to untrust (Total: ${trustedUsers.length} trusted, Page ${currentPage}/${totalPages}):`,
+    components,
+  };
+};
+
+export const UNBLOCK_PAGE_SIZE = 25;
+
+export interface BlockedUserDisplay {
+  id: string;
+  tag: string;
+}
+
+export interface UnblockPaginationPayload {
+  content: string;
+  components: ActionRowBuilder<any>[];
+}
+
+/**
+ * Builds the paginated unblock menu payload to support arbitrarily large blocked lists.
+ */
+export const buildUnblockPaginationPayload = (
+  channelId: string,
+  blockedUsers: BlockedUserDisplay[],
+  page = 1,
+  emojis: PrivateJtcEmojisConfig,
+  client?: Client | null,
+): UnblockPaginationPayload => {
+  if (blockedUsers.length === 0) {
+    return {
+      content: `${formatEmoji("cross", emojis.cross, client)} No members are currently blocked in this room.`,
+      components: [],
+    };
+  }
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(blockedUsers.length / UNBLOCK_PAGE_SIZE),
+  );
+  const currentPage = Math.min(Math.max(1, page), totalPages);
+
+  const startIndex = (currentPage - 1) * UNBLOCK_PAGE_SIZE;
+  const pageUsers = blockedUsers.slice(
+    startIndex,
+    startIndex + UNBLOCK_PAGE_SIZE,
+  );
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId(`pjtc:unblock_select:${channelId}`)
+    .setPlaceholder(
+      `Select user(s) to unblock (Page ${currentPage}/${totalPages})`,
+    )
+    .setMinValues(1)
+    .setMaxValues(pageUsers.length)
+    .setOptions(
+      pageUsers.map((user) => ({
+        label: user.tag.slice(0, 100),
+        value: user.id,
+        description: `ID: ${user.id}`,
+      })),
+    );
+
+  const selectRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+    selectMenu,
+  );
+
+  const components: ActionRowBuilder<any>[] = [selectRow];
+
+  if (totalPages > 1) {
+    const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`pjtc:unblock_page:${channelId}:${currentPage - 1}`)
+        .setLabel("◀ Previous")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(currentPage <= 1),
+      new ButtonBuilder()
+        .setCustomId("pjtc:unblock_page_indicator")
+        .setLabel(`${currentPage} / ${totalPages}`)
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId(`pjtc:unblock_page:${channelId}:${currentPage + 1}`)
+        .setLabel("Next ▶")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(currentPage >= totalPages),
+    );
+    components.push(navRow);
+  }
+
+  return {
+    content: `${formatEmoji("unblock", emojis.unblock, client)} Select member(s) to unblock (Total: ${blockedUsers.length} blocked, Page ${currentPage}/${totalPages}):`,
     components,
   };
 };
