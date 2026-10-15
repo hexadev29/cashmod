@@ -20,7 +20,7 @@ export interface PrivateJtcEmojisConfig {
 export const defaultPrivateJtcEmojis: PrivateJtcEmojisConfig = {
   untrust: "1560263550407286816",
   unlock: "1560263547529994322",
-  unhide: "1560263545311068292",
+  unhide: "1560263525065171054",
   trust: "1560263542421069915",
   transfer: "1560263540164796426",
   success: "1560263538138677418",
@@ -29,7 +29,7 @@ export const defaultPrivateJtcEmojis: PrivateJtcEmojisConfig = {
   limit: "1560263531364880494",
   kick: "1560263529188167680",
   invite: "1560263527183290449",
-  hide: "1560263525065171054",
+  hide: "1560263545311068292",
   cross: "1560263522972340264",
   chat: "1560263520803758120",
   block: "1560263522972340264",
