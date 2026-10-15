@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { ChannelType, type Guild, type CategoryChannel } from "discord.js";
+import { ChannelType, type Guild } from "discord.js";
 import { CategoryManager } from "../../../src/modules/jtc/category-manager.js";
 import { JtcStateStore } from "../../../src/modules/jtc/jtc-state-store.js";
 import { jtcConfig } from "../../../config/jtc/jtc.config.js";
@@ -51,6 +51,7 @@ describe("CategoryManager", () => {
       id: guildId,
       name: "Test Guild",
       channels: {
+        cache: mockChannels,
         fetch: vi.fn().mockImplementation(async (id?: string) => {
           if (id) {
             return mockChannels.get(id) ?? null;
@@ -76,141 +77,137 @@ describe("CategoryManager", () => {
   it("fresh installation starts uninitialized with no category IDs", () => {
     expect(manager.isInitialized()).toBe(false);
     expect(manager.getCategoryId("Solo")).toBeUndefined();
+    expect(manager.getAllManagedCategoryIds()).toHaveLength(0);
   });
 
-  it("creates all eight categories in exact order immediately below anchor and persists", async () => {
+  it("initial step (initFromState) does not create any dynamic categories", async () => {
     const guild = createMockGuild();
 
-    const result = await manager.ensureInitialized(guild);
+    await manager.initFromState(guild);
 
     expect(manager.isInitialized()).toBe(true);
-    expect(result.size).toBe(8);
+    // CRITICAL: 0 dynamic categories created in Discord on initial step
+    expect((guild.channels.create as any).mock.calls.length).toBe(0);
+    expect(manager.getAllManagedCategoryIds()).toHaveLength(0);
+    expect(manager.getCategoryId("Solo")).toBeUndefined();
+  });
 
-    // Verify all 8 categories exist
-    const expectedOrder = [
-      "Solo",
-      "Duo",
-      "Trio",
-      "Quad",
-      "Penta",
-      "Hepta",
-      "Septa",
-      "Octa",
-    ];
-    for (let i = 0; i < expectedOrder.length; i++) {
-      const catName = expectedOrder[i] as any;
-      const catId = manager.getCategoryId(catName);
-      expect(catId).toBeDefined();
+  it("dynamically creates Solo category on demand below anchor and persists to disk", async () => {
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
 
-      const discordChannel = mockChannels.get(catId!);
-      expect(discordChannel).toBeDefined();
-      expect(discordChannel.name).toBe(catName);
-      // Positioned immediately below anchor (anchor.position is 5, so 6, 7, 8, ...)
-      expect(discordChannel.position).toBe(5 + 1 + i);
-    }
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
 
-    // Verify file was written to disk
+    expect(soloId).toBeDefined();
+    expect(manager.getCategoryId("Solo")).toBe(soloId);
+    expect((guild.channels.create as any).mock.calls.length).toBe(1);
+
+    const discordChannel = mockChannels.get(soloId);
+    expect(discordChannel).toBeDefined();
+    expect(discordChannel.name).toBe("Solo");
+    // Positioned immediately below anchor (anchor is position 5, Solo index 0 => 5 + 1 + 0 = 6)
+    expect(discordChannel.position).toBe(6);
+
+    // Verify persisted to disk with only Solo
     expect(fs.existsSync(testFilePath)).toBe(true);
     const persisted = await stateStore.loadState(guildId, anchorId);
-    expect(Object.keys(persisted!)).toHaveLength(8);
+    expect(persisted).toEqual({ Solo: soloId });
   });
 
-  it("subsequent calls reuse existing categories without re-creating", async () => {
+  it("subsequent joins for Solo reuse the existing category without re-creating", async () => {
     const guild = createMockGuild();
-    await manager.ensureInitialized(guild);
-    const createCallCount = (guild.channels.create as any).mock.calls.length;
-    expect(createCallCount).toBe(8);
+    await manager.initFromState(guild);
 
-    // Call again on the same manager
-    await manager.ensureInitialized(guild);
-    expect((guild.channels.create as any).mock.calls.length).toBe(8); // No extra calls
+    const firstSoloId = await manager.getOrCreateCategory(guild, "Solo");
+    expect((guild.channels.create as any).mock.calls.length).toBe(1);
+
+    const secondSoloId = await manager.getOrCreateCategory(guild, "Solo");
+    expect(secondSoloId).toBe(firstSoloId);
+    // No additional channel creation
+    expect((guild.channels.create as any).mock.calls.length).toBe(1);
   });
 
-  it("restarts reload previously saved categories from disk", async () => {
+  it("creates Duo category on demand with correct position below Solo", async () => {
     const guild = createMockGuild();
-    // 1st run
-    await manager.ensureInitialized(guild);
-    const firstSoloId = manager.getCategoryId("Solo");
+    await manager.initFromState(guild);
 
-    // Simulate restart with a new manager instance reading the same stateStore
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
+    const duoId = await manager.getOrCreateCategory(guild, "Duo");
+
+    expect(soloId).not.toBe(duoId);
+    expect((guild.channels.create as any).mock.calls.length).toBe(2);
+
+    const duoChannel = mockChannels.get(duoId);
+    expect(duoChannel.position).toBe(7); // 5 + 1 + 1 (Duo index is 1)
+
+    // State file has both
+    const persisted = await stateStore.loadState(guildId, anchorId);
+    expect(persisted).toEqual({ Solo: soloId, Duo: duoId });
+  });
+
+  it("restarts reload previously created categories from disk without re-creating", async () => {
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
+
+    // Simulate restart: new CategoryManager instance
     const newManager = new CategoryManager(
       { ...jtcConfig, anchorCategoryId: anchorId },
       stateStore,
     );
-    expect(newManager.isInitialized()).toBe(false);
+    await newManager.initFromState(guild);
 
-    await newManager.ensureInitialized(guild);
-    expect(newManager.isInitialized()).toBe(true);
-    expect(newManager.getCategoryId("Solo")).toBe(firstSoloId);
-    expect((guild.channels.create as any).mock.calls.length).toBe(8); // No new creation!
+    expect(newManager.getCategoryId("Solo")).toBe(soloId);
+    // Joining Solo should reuse it without creating a new channel
+    const reloadedSoloId = await newManager.getOrCreateCategory(guild, "Solo");
+    expect(reloadedSoloId).toBe(soloId);
+    // Exactly 1 creation across both instances
+    expect((guild.channels.create as any).mock.calls.length).toBe(1);
   });
 
-  it("safely reconciles if a single category was deleted in Discord", async () => {
+  it("re-creates category on demand if it was deleted in Discord", async () => {
     const guild = createMockGuild();
-    await manager.ensureInitialized(guild);
-    const duoId = manager.getCategoryId("Duo")!;
+    await manager.initFromState(guild);
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
 
-    // Simulate user deleting Duo in Discord
-    mockChannels.delete(duoId);
+    // Simulate user deleting Solo category in Discord
+    mockChannels.delete(soloId);
 
-    // Restart/re-init
-    const restartManager = new CategoryManager(
-      { ...jtcConfig, anchorCategoryId: anchorId },
-      stateStore,
-    );
-    await restartManager.ensureInitialized(guild);
-
-    expect(restartManager.isInitialized()).toBe(true);
-    // Duo should have a new ID
-    const newDuoId = restartManager.getCategoryId("Duo");
-    expect(newDuoId).toBeDefined();
-    expect(newDuoId).not.toBe(duoId);
-    // Other categories preserved
-    expect(restartManager.getCategoryId("Solo")).toBe(
-      manager.getCategoryId("Solo"),
-    );
+    // Next time someone needs Solo, it dynamically re-creates it
+    const newSoloId = await manager.getOrCreateCategory(guild, "Solo");
+    expect(newSoloId).toBeDefined();
+    expect(newSoloId).not.toBe(soloId);
+    expect((guild.channels.create as any).mock.calls.length).toBe(2);
   });
 
-  it("concurrent calls share single-flight initialization and do not duplicate categories", async () => {
+  it("concurrent calls to getOrCreateCategory share execution and do not duplicate", async () => {
     const guild = createMockGuild();
+    await manager.initFromState(guild);
 
-    // Call ensureInitialized concurrently 5 times
+    // 5 concurrent requests for Solo
     const [r1, r2, r3, r4, r5] = await Promise.all([
-      manager.ensureInitialized(guild),
-      manager.ensureInitialized(guild),
-      manager.ensureInitialized(guild),
-      manager.ensureInitialized(guild),
-      manager.ensureInitialized(guild),
+      manager.getOrCreateCategory(guild, "Solo"),
+      manager.getOrCreateCategory(guild, "Solo"),
+      manager.getOrCreateCategory(guild, "Solo"),
+      manager.getOrCreateCategory(guild, "Solo"),
+      manager.getOrCreateCategory(guild, "Solo"),
     ]);
 
     expect(r1).toBe(r2);
     expect(r2).toBe(r3);
-    // Only 8 categories created total
-    expect((guild.channels.create as any).mock.calls.length).toBe(8);
+    expect(r3).toBe(r4);
+    expect(r4).toBe(r5);
+    // Only 1 category created
+    expect((guild.channels.create as any).mock.calls.length).toBe(1);
   });
 
-  it("fails safely and does not mark complete if anchor category is missing", async () => {
+  it("fails safely if anchor category is missing when creating a category", async () => {
     mockChannels.delete(anchorId); // Anchor does not exist
     const guild = createMockGuild();
+    await manager.initFromState(guild);
 
-    await expect(manager.ensureInitialized(guild)).rejects.toThrow(
+    await expect(manager.getOrCreateCategory(guild, "Solo")).rejects.toThrow(
       /Anchor category verification failed/,
     );
-    expect(manager.isInitialized()).toBe(false);
-  });
-
-  it("does not adopt unrelated categories that do not match JTC names", async () => {
-    // Add an unrelated category in the server
-    mockChannels.set("unrelated-cat", {
-      id: "unrelated-cat",
-      name: "Staff Channels",
-      type: ChannelType.GuildCategory,
-      position: 1,
-    });
-
-    const guild = createMockGuild();
-    await manager.ensureInitialized(guild);
-
-    expect(manager.isManagedCategory("unrelated-cat")).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { startBot } from "./bot/start-bot.js";
 import { logger } from "./diagnostics/logger.js";
 

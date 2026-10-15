@@ -1,13 +1,18 @@
+import "dotenv/config";
 import dotenv from "dotenv";
 import type { AppConfig } from "./config-types.js";
 import { discordConfig } from "../../../config/discord/discord.config.js";
 import { permissionsConfig } from "../../../config/permissions/permissions.config.js";
-import { jtcConfig } from "../../../config/jtc/jtc.config.js";
+import { buildJtcConfig } from "../../../config/jtc/jtc.config.js";
 import { diagnosticsConfig } from "../../../config/diagnostics/diagnostics.config.js";
 import { validateConfig } from "./validate-config.js";
 import { registerSecret } from "../../diagnostics/redact-secrets.js";
 
 let cachedConfig: AppConfig | null = null;
+
+export const clearConfigCache = (): void => {
+  cachedConfig = null;
+};
 
 export const loadConfig = (
   overrideEnv?: NodeJS.ProcessEnv,
@@ -38,7 +43,7 @@ export const loadConfig = (
       guildId: envSource.DISCORD_GUILD_ID ?? discordConfig.guildId,
     },
     permissions: permissionsConfig,
-    jtc: jtcConfig,
+    jtc: buildJtcConfig(envSource),
     diagnostics: {
       ...diagnosticsConfig,
       logLevel: (envSource.LOG_LEVEL as any) || diagnosticsConfig.logLevel,

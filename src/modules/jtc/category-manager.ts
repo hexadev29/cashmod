@@ -4,12 +4,14 @@ import type {
   JtcCategoryName,
 } from "../../../config/jtc/jtc.config.js";
 import { JtcStateStore } from "./jtc-state-store.js";
+import { AsyncLock } from "./room-allocator.js";
 import { logger } from "../../diagnostics/logger.js";
 
 export class CategoryManager {
   private readonly categoryMap = new Map<JtcCategoryName, string>();
   private readonly idToCategoryName = new Map<string, JtcCategoryName>();
-  private initPromise: Promise<Map<JtcCategoryName, string>> | null = null;
+  private readonly categoryLock = new AsyncLock();
+  private initialized = false;
   private readonly log = logger.child({ subsystem: "CategoryManager" });
 
   constructor(
@@ -18,10 +20,11 @@ export class CategoryManager {
   ) {}
 
   public isInitialized(): boolean {
-    return (
-      this.categoryMap.size === this.config.categoryOrder.length &&
-      this.config.categoryOrder.every((cat) => this.categoryMap.has(cat))
-    );
+    return this.initialized;
+  }
+
+  public hasCategory(name: JtcCategoryName): boolean {
+    return this.categoryMap.has(name);
   }
 
   public getCategoryId(name: JtcCategoryName): string | undefined {
@@ -41,66 +44,43 @@ export class CategoryManager {
   }
 
   /**
-   * Ensures that all 8 JTC categories are initialized, created in Discord, and persisted.
-   * Uses single-flight synchronization so concurrent calls share the same execution.
+   * Initial step: checks Discord anchor category and loads previously persisted
+   * runtime state from disk if any exists.
+   * DOES NOT create any dynamic categories eagerly. Dynamic categories are only
+   * created on demand when a user joins a trigger.
    */
-  public async ensureInitialized(
-    guild: Guild,
-  ): Promise<Map<JtcCategoryName, string>> {
-    if (this.isInitialized()) {
-      return this.categoryMap;
-    }
-
-    if (this.initPromise) {
-      return this.initPromise;
-    }
-
-    this.initPromise = this.performInitialization(guild);
-
-    try {
-      const result = await this.initPromise;
-      return result;
-    } finally {
-      this.initPromise = null;
-    }
-  }
-
-  private async performInitialization(
-    guild: Guild,
-  ): Promise<Map<JtcCategoryName, string>> {
-    this.log.info(
-      `Initializing dynamic JTC categories for guild "${guild.name}" (${guild.id})...`,
-    );
-
-    // 1. Validate anchor category
+  public async initFromState(guild: Guild): Promise<void> {
     const anchorId = this.config.anchorCategoryId;
-    let anchorChannel: CategoryChannel;
 
+    // 1. Validate anchor category existence
     try {
       const fetched = await guild.channels.fetch(anchorId);
       if (!fetched || fetched.type !== ChannelType.GuildCategory) {
-        throw new Error(
-          `Configured anchor channel "${anchorId}" was not found in guild or is not a Category channel.`,
+        this.log.warn(
+          `Configured anchor channel "${anchorId}" was not found in guild or is not a Category channel. Dynamic categories will require a valid anchor.`,
+          { anchorId, guildId: guild.id },
+        );
+      } else {
+        this.log.info(
+          `Anchor category "${fetched.name}" (${fetched.id}) verified successfully.`,
         );
       }
-      anchorChannel = fetched as CategoryChannel;
     } catch (err: any) {
-      this.log.error(
+      this.log.warn(
         `Failed to resolve anchor category "${anchorId}": ${err?.message}`,
         { anchorId, guildId: guild.id },
-        err,
       );
-      throw new Error(`Anchor category verification failed: ${err?.message}`);
     }
 
-    // 2. Fetch current guild channels to verify existence
+    // 2. Fetch current guild channels to verify any existing saved categories
     const guildChannels = await guild.channels.fetch();
 
     // 3. Load saved state from disk
     const savedMapping = await this.stateStore.loadState(guild.id, anchorId);
-    const resolved = new Map<JtcCategoryName, string>();
 
-    // 4. Verify existing saved categories in Discord
+    this.categoryMap.clear();
+    this.idToCategoryName.clear();
+
     if (savedMapping) {
       for (const [name, catId] of Object.entries(savedMapping) as [
         JtcCategoryName,
@@ -113,88 +93,168 @@ export class CategoryManager {
           discordChannel.type === ChannelType.GuildCategory &&
           discordChannel.name.toLowerCase() === name.toLowerCase()
         ) {
-          resolved.set(name, catId);
+          this.categoryMap.set(name, catId);
+          this.idToCategoryName.set(catId, name);
           this.log.debug(`Reused existing valid category "${name}" (${catId})`);
         } else {
           this.log.warn(
-            `Previously saved category "${name}" (${catId}) is missing or modified in Discord; will re-create/recover.`,
+            `Previously saved category "${name}" (${catId}) is missing or modified in Discord; will be re-created on demand.`,
           );
         }
       }
     }
 
-    // 5. Discover previously created categories if state was missing
-    if (resolved.size < this.config.categoryOrder.length) {
-      for (const catName of this.config.categoryOrder) {
-        if (resolved.has(catName)) continue;
+    // 4. Also discover previously created matching categories in Discord if state file was missing
+    for (const catName of this.config.categoryOrder) {
+      if (this.categoryMap.has(catName)) continue;
 
-        // Search for existing category channels matching the name positioned around the anchor
-        let matchingCategory: any = null;
-        for (const [, ch] of guildChannels) {
-          if (
-            ch != null &&
-            ch.type === ChannelType.GuildCategory &&
-            ch.name.toLowerCase() === catName.toLowerCase() &&
-            ch.id !== anchorId
-          ) {
-            matchingCategory = ch;
-            break;
-          }
-        }
-
-        if (matchingCategory) {
-          resolved.set(catName, matchingCategory.id);
+      for (const [, ch] of guildChannels) {
+        if (
+          ch != null &&
+          ch.type === ChannelType.GuildCategory &&
+          ch.name.toLowerCase() === catName.toLowerCase() &&
+          ch.id !== anchorId
+        ) {
+          this.categoryMap.set(catName, ch.id);
+          this.idToCategoryName.set(ch.id, catName);
           this.log.info(
-            `Discovered previously created matching category "${catName}" (${matchingCategory.id}); adopting.`,
+            `Discovered existing matching category "${catName}" (${ch.id}); adopting.`,
           );
+          break;
         }
       }
     }
 
-    // 6. Create any remaining missing categories in exact order: Solo -> Octa
-    const anchorPosition = anchorChannel.position;
+    this.initialized = true;
+    this.log.info(
+      `JTC dynamic categories initialized from state (${this.categoryMap.size} active category/categories present).`,
+    );
+  }
 
-    for (let index = 0; index < this.config.categoryOrder.length; index++) {
-      const catName = this.config.categoryOrder[index];
-      if (resolved.has(catName)) continue;
+  /**
+   * Resolves an existing dynamic category ID, or creates it on demand if it does not exist yet.
+   * Uses lock synchronization to prevent concurrent creations of the same category.
+   */
+  public async getOrCreateCategory(
+    guild: Guild,
+    categoryName: JtcCategoryName,
+  ): Promise<string> {
+    // Fast path: already known and cached
+    const existingId = this.categoryMap.get(categoryName);
+    if (existingId) {
+      const cached = guild.channels.cache?.get(existingId);
+      if (cached && cached.type === ChannelType.GuildCategory) {
+        return existingId;
+      }
+    }
 
-      const targetPosition = anchorPosition + 1 + index;
+    // Acquire lock for this specific category name
+    const release = await this.categoryLock.acquire(`cat:${categoryName}`);
+    try {
+      // Re-check after lock
+      const recheckedId = this.categoryMap.get(categoryName);
+      if (recheckedId) {
+        try {
+          const fetched = await guild.channels.fetch(recheckedId);
+          if (fetched && fetched.type === ChannelType.GuildCategory) {
+            return recheckedId;
+          }
+        } catch {
+          // Channel might have been deleted, proceed to re-create
+          this.categoryMap.delete(categoryName);
+          this.idToCategoryName.delete(recheckedId);
+        }
+      }
+
+      // Check current guild channels
+      const guildChannels = await guild.channels.fetch();
+      for (const [, ch] of guildChannels) {
+        if (
+          ch != null &&
+          ch.type === ChannelType.GuildCategory &&
+          ch.name.toLowerCase() === categoryName.toLowerCase() &&
+          ch.id !== this.config.anchorCategoryId
+        ) {
+          this.categoryMap.set(categoryName, ch.id);
+          this.idToCategoryName.set(ch.id, categoryName);
+          await this.persistState(guild.id);
+          return ch.id;
+        }
+      }
+
+      // Need to create dynamically below anchor category
+      const anchorId = this.config.anchorCategoryId;
+      let anchorChannel: CategoryChannel;
+      try {
+        const fetchedAnchor = await guild.channels.fetch(anchorId);
+        if (
+          !fetchedAnchor ||
+          fetchedAnchor.type !== ChannelType.GuildCategory
+        ) {
+          throw new Error(
+            `Anchor channel "${anchorId}" was not found in guild or is not a Category channel.`,
+          );
+        }
+        anchorChannel = fetchedAnchor as CategoryChannel;
+      } catch (err: any) {
+        this.log.error(
+          `Failed to resolve anchor category "${anchorId}": ${err?.message}`,
+          { anchorId, guildId: guild.id },
+          err,
+        );
+        throw new Error(`Anchor category verification failed: ${err?.message}`);
+      }
+
+      const catIndex = this.config.categoryOrder.indexOf(categoryName);
+      const targetPosition =
+        anchorChannel.position + 1 + (catIndex >= 0 ? catIndex : 0);
+
       this.log.info(
-        `Dynamically creating category "${catName}" at target position ${targetPosition} below anchor "${anchorChannel.name}"`,
+        `Dynamically creating category "${categoryName}" at target position ${targetPosition} below anchor "${anchorChannel.name}"`,
       );
 
-      try {
-        const created = (await guild.channels.create({
-          name: catName,
-          type: ChannelType.GuildCategory,
-          position: targetPosition,
-          reason: "Cash Mod dynamic JTC category creation",
-        })) as CategoryChannel;
+      const created = (await guild.channels.create({
+        name: categoryName,
+        type: ChannelType.GuildCategory,
+        position: targetPosition,
+        reason: `Cash Mod dynamic JTC category creation for ${categoryName}`,
+      })) as CategoryChannel;
 
-        resolved.set(catName, created.id);
-        this.log.info(
-          `Created category "${catName}" with generated ID: ${created.id}`,
-        );
-      } catch (createErr: any) {
-        this.log.error(
-          `Failed to create Discord category "${catName}": ${createErr?.message}`,
-          { catName, targetPosition },
-          createErr,
-        );
-        throw createErr;
-      }
+      this.categoryMap.set(categoryName, created.id);
+      this.idToCategoryName.set(created.id, categoryName);
+
+      await this.persistState(guild.id);
+      this.log.info(
+        `Created dynamic category "${categoryName}" with generated ID: ${created.id}`,
+      );
+
+      return created.id;
+    } finally {
+      release();
     }
+  }
 
-    // 7. Persist updated category state atomically
+  /**
+   * Persists the current category mapping to disk.
+   */
+  private async persistState(guildId: string): Promise<void> {
     const stateToSave: Partial<Record<JtcCategoryName, string>> = {};
-    for (const [name, id] of resolved.entries()) {
+    for (const [name, id] of this.categoryMap.entries()) {
       stateToSave[name] = id;
     }
 
+    if (Object.keys(stateToSave).length === 0) {
+      return;
+    }
+
     try {
-      await this.stateStore.saveState(guild.id, anchorId, stateToSave);
-      this.log.info(
-        `Successfully persisted ${resolved.size} JTC category IDs to disk.`,
+      await this.stateStore.saveState(
+        guildId,
+        this.config.anchorCategoryId,
+        stateToSave,
+      );
+      this.log.debug(
+        `Successfully persisted ${this.categoryMap.size} JTC category IDs to disk.`,
       );
     } catch (saveErr: any) {
       this.log.error(
@@ -202,21 +262,18 @@ export class CategoryManager {
         undefined,
         saveErr,
       );
-      throw new Error(`State persistence failure: ${saveErr?.message}`);
     }
+  }
 
-    // 8. Commit to in-memory cache
-    this.categoryMap.clear();
-    this.idToCategoryName.clear();
-
-    for (const [name, id] of resolved.entries()) {
-      this.categoryMap.set(name, id);
-      this.idToCategoryName.set(id, name);
+  /**
+   * Compatibility method: initializes state from disk and returns current active categories.
+   */
+  public async ensureInitialized(
+    guild: Guild,
+  ): Promise<Map<JtcCategoryName, string>> {
+    if (!this.initialized) {
+      await this.initFromState(guild);
     }
-
-    this.log.info(
-      `Dynamic JTC categories initialized successfully (${this.categoryMap.size}/8 categories ready).`,
-    );
     return this.categoryMap;
   }
 }

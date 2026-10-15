@@ -118,6 +118,7 @@ describe("JtcService", () => {
       id: config.discord.guildId,
       name: "Test Guild",
       channels: {
+        cache: createdChannels,
         fetch: vi.fn().mockImplementation(async (id?: string) => {
           if (id) {
             return createdChannels.get(id) ?? null;
@@ -173,7 +174,7 @@ describe("JtcService", () => {
     } as unknown as GuildMember;
   };
 
-  it("allocates room #1 on first join and moves member after initializing category", async () => {
+  it("allocates room #1 on first join, creates Solo category on demand, and moves member", async () => {
     const guild = createMockGuild();
     const member = createMockMember("m1", guild);
 
@@ -188,8 +189,14 @@ describe("JtcService", () => {
       expect.any(String),
     );
 
-    // CategoryManager must now be initialized
-    expect(categoryManager.isInitialized()).toBe(true);
+    // Solo category was created dynamically on demand
+    expect(categoryManager.hasCategory("Solo")).toBe(true);
+    // Only 1 dynamic category was created, NOT all 8!
+    const dynamicCats = Array.from(createdChannels.values()).filter(
+      (ch) => ch.type === ChannelType.GuildCategory && ch.id !== anchorId,
+    );
+    expect(dynamicCats).toHaveLength(1);
+    expect(dynamicCats[0].name).toBe("Solo");
   });
 
   it("compensates and deletes channel if moving member fails", async () => {

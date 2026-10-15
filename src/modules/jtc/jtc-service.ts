@@ -90,22 +90,18 @@ export class JtcService {
       return null;
     }
 
-    // Ensure all 8 categories are dynamically initialized in Discord and persisted
+    // Resolve or dynamically create the category for this trigger on-demand
+    let targetCategoryId: string;
     try {
-      await this.categoryManager.ensureInitialized(member.guild);
-    } catch (initErr: any) {
-      this.log.error(
-        `Aborting JTC room creation: CategoryManager failed to initialize categories: ${initErr?.message}`,
-        undefined,
-        initErr,
+      targetCategoryId = await this.categoryManager.getOrCreateCategory(
+        member.guild,
+        categoryName,
       );
-      return null;
-    }
-
-    const targetCategoryId = this.categoryManager.getCategoryId(categoryName);
-    if (!targetCategoryId) {
+    } catch (catErr: any) {
       this.log.error(
-        `Category "${categoryName}" ID could not be resolved from CategoryManager.`,
+        `Aborting JTC room creation: CategoryManager failed to get or create category "${categoryName}": ${catErr?.message}`,
+        undefined,
+        catErr,
       );
       return null;
     }
@@ -262,7 +258,7 @@ export class JtcService {
    * Reconciles dynamic categories and existing channels after bot startup.
    */
   public async reconcile(guild: Guild): Promise<ReconciliationResult> {
-    await this.categoryManager.ensureInitialized(guild);
+    await this.categoryManager.initFromState(guild);
     return reconcileJtcRooms(
       guild,
       this.config.jtc,
