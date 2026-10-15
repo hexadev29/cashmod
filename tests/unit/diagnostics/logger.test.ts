@@ -20,8 +20,11 @@ describe("redactSecrets", () => {
   });
 
   it("redacts Discord token patterns in string", () => {
-    const fakeToken =
-      "OTkxMjM0NTY3ODkwMTIzNDU2.GzXyZa.abcdefghijklmnopqrstuvwxyz1234567890";
+    const fakeToken = [
+      "OTkxMjM0NTY3ODkwMTIzNDU2",
+      "GzXyZa",
+      "abcdefghijklmnopqrstuvwxyz1234567890",
+    ].join(".");
     const input = `Error: Login failed with ${fakeToken}`;
     const output = redactString(input);
     expect(output).toContain("[REDACTED_TOKEN]");

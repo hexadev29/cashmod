@@ -35,7 +35,7 @@ describe("findFirstMissingPositiveNumber", () => {
 });
 
 describe("extractUsedRoomNumbers", () => {
-  const namingRegex = /^(Solo|Duo|Trio|Quad|Penta|Hepta|Septa|Octa)\s+#(\d+)$/i;
+  const namingRegex = /^(Solo|Duo|Trio|Quad)\s+#(\d+)$/i;
 
   it("extracts numbers for the matching category", () => {
     const names = ["Solo #1", "Solo #2", "Solo #5"];

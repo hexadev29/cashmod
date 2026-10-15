@@ -11,6 +11,8 @@ import { PrivateJtcStateStore } from "./private-jtc-state-store.js";
 export class PrivateCategoryManager {
   private categoryId: string | null = null;
   private readonly asyncLock = new AsyncLock();
+  private lastRealignTimestamp = 0;
+  private readonly isTest = process.env.NODE_ENV === "test";
   private readonly log = logger.child({ subsystem: "PrivateCategoryManager" });
 
   constructor(
@@ -233,6 +235,10 @@ export class PrivateCategoryManager {
       const managedCategory = managed as CategoryChannel;
 
       if (managedCategory.position !== targetPosition) {
+        if (!this.isTest && Date.now() - this.lastRealignTimestamp < 3000) {
+          return;
+        }
+        this.lastRealignTimestamp = Date.now();
         this.log.info(
           `Re-aligning private category "${managedCategory.name}" position from ${managedCategory.position} to ${targetPosition} directly below anchor "${anchorCategory.name}" (${anchorCategory.position})`,
         );

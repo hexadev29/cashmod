@@ -33,10 +33,6 @@ const createValidConfig = (): AppConfig => ({
       Duo: { name: "Duo", userLimit: 2 },
       Trio: { name: "Trio", userLimit: 3 },
       Quad: { name: "Quad", userLimit: 4 },
-      Penta: { name: "Penta", userLimit: 5 },
-      Hepta: { name: "Hepta", userLimit: 6 },
-      Septa: { name: "Septa", userLimit: 7 },
-      Octa: { name: "Octa", userLimit: 8 },
     },
     triggers: {
       "100000000000000001": {
@@ -46,7 +42,7 @@ const createValidConfig = (): AppConfig => ({
         userLimit: 1,
       },
     },
-    namingRegex: /^(Solo|Duo|Trio|Quad|Penta|HEPTA|Septa|Octa)\s+#(\d+)$/i,
+    namingRegex: /^(Solo|Duo|Trio|Quad)\s+#(\d+)$/i,
     positioning: {},
     cleanup: {
       delayMs: 10,

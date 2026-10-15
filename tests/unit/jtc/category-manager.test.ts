@@ -257,16 +257,16 @@ describe("CategoryManager", () => {
     expect(mockChannels.has(soloId)).toBe(true);
   });
 
-  it("creates Septa directly below anchor when no other dynamic categories exist", async () => {
+  it("creates Quad directly below anchor when no other dynamic categories exist", async () => {
     const guild = createMockGuild();
     await manager.initFromState(guild);
 
     // Anchor is at position 5
-    const septaId = await manager.getOrCreateCategory(guild, "Septa");
-    const septaChannel = mockChannels.get(septaId);
+    const quadId = await manager.getOrCreateCategory(guild, "Quad");
+    const quadChannel = mockChannels.get(quadId);
 
-    // Must be placed directly below anchor (position 6), NOT skipped down to position 12
-    expect(septaChannel.position).toBe(6);
+    // Must be placed directly below anchor (position 6), NOT skipped down
+    expect(quadChannel.position).toBe(6);
   });
 
   it("places Solo above Trio, and Duo between Solo and Trio", async () => {
@@ -295,21 +295,30 @@ describe("CategoryManager", () => {
   });
 
   it("realigns existing out-of-order categories upon initFromState", async () => {
-    // Simulate Septa existing in Discord below other server categories (e.g. at position 12)
-    const existingSeptaId = "cat-existing-septa";
-    mockChannels.set(existingSeptaId, {
-      id: existingSeptaId,
-      name: "Septa",
+    // Simulate Duo existing at position 6 and Solo existing at position 7 (inverted relative order)
+    const existingSoloId = "cat-existing-solo";
+    const existingDuoId = "cat-existing-duo";
+    mockChannels.set(existingSoloId, {
+      id: existingSoloId,
+      name: "Solo",
       type: ChannelType.GuildCategory,
-      position: 12,
+      position: 7,
+    });
+    mockChannels.set(existingDuoId, {
+      id: existingDuoId,
+      name: "Duo",
+      type: ChannelType.GuildCategory,
+      position: 6,
     });
 
     const guild = createMockGuild();
     await manager.initFromState(guild);
 
-    expect(manager.getCategoryId("Septa")).toBe(existingSeptaId);
-    // Realignment automatically moved Septa from position 12 to directly below anchor (position 6)
-    expect(mockChannels.get(existingSeptaId).position).toBe(6);
+    expect(manager.getCategoryId("Solo")).toBe(existingSoloId);
+    expect(manager.getCategoryId("Duo")).toBe(existingDuoId);
+    // Realignment automatically restored correct order below anchor (pos 5)
+    expect(mockChannels.get(existingSoloId).position).toBe(6);
+    expect(mockChannels.get(existingDuoId).position).toBe(7);
   });
 });
 

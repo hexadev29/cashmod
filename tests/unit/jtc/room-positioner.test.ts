@@ -47,9 +47,9 @@ describe("calculateCategoryTargetPosition", () => {
   const anchorPos = 2;
 
   it("places initial category directly below anchor regardless of categoryOrder index", () => {
-    // When no dynamic categories exist yet, even Septa should be created directly below anchor (anchorPos + 1)
+    // When no dynamic categories exist yet, even Quad should be created directly below anchor (anchorPos + 1)
     expect(
-      calculateCategoryTargetPosition("Septa", JTC_CATEGORY_ORDER, [], anchorPos),
+      calculateCategoryTargetPosition("Quad", JTC_CATEGORY_ORDER, [], anchorPos),
     ).toBe(3);
 
     expect(
@@ -84,26 +84,26 @@ describe("calculateCategoryTargetPosition", () => {
     ).toBe(4);
   });
 
-  it("places Septa under Solo and Duo when only Solo and Duo exist", () => {
+  it("places Quad under Solo and Duo when only Solo and Duo exist", () => {
     const existing: ExistingCategoryInfo[] = [
       { name: "Solo", position: 3 },
       { name: "Duo", position: 4 },
     ];
-    // Septa comes after Duo, so it goes after Duo (4 + 1 = 5)
+    // Quad comes after Duo, so it goes after Duo (4 + 1 = 5)
     expect(
-      calculateCategoryTargetPosition("Septa", JTC_CATEGORY_ORDER, existing, anchorPos),
+      calculateCategoryTargetPosition("Quad", JTC_CATEGORY_ORDER, existing, anchorPos),
     ).toBe(5);
   });
 
-  it("places Quad between Trio and Septa", () => {
+  it("places Trio between Duo and Quad", () => {
     const existing: ExistingCategoryInfo[] = [
       { name: "Solo", position: 3 },
-      { name: "Trio", position: 4 },
-      { name: "Septa", position: 5 },
+      { name: "Duo", position: 4 },
+      { name: "Quad", position: 5 },
     ];
-    // Quad comes before Septa, so it takes Septa's position (5), pushing Septa to 6
+    // Trio comes before Quad, so it takes Quad's position (5), pushing Quad to 6
     expect(
-      calculateCategoryTargetPosition("Quad", JTC_CATEGORY_ORDER, existing, anchorPos),
+      calculateCategoryTargetPosition("Trio", JTC_CATEGORY_ORDER, existing, anchorPos),
     ).toBe(5);
   });
 });

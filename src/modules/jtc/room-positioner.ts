@@ -41,7 +41,7 @@ export interface ExistingCategoryInfo {
  * Calculates the target position for a dynamic JTC category.
  *
  * Requirements:
- * 1. Category order is: Solo → Duo → Trio → Quad → Penta → Hepta → Septa → Octa.
+ * 1. Category order is: Solo → Duo → Trio → Quad.
  * 2. If no dynamic JTC categories exist, place immediately below the anchor category (anchorPosition + 1).
  * 3. If dynamic categories exist:
  *    - Find the first existing category that appears AFTER targetCategory in categoryOrder.

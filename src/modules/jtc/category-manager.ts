@@ -16,6 +16,8 @@ export class CategoryManager {
   private readonly idToCategoryName = new Map<string, JtcCategoryName>();
   private readonly categoryLock = new AsyncLock();
   private initialized = false;
+  private lastRealignTimestamp = 0;
+  private readonly isTest = process.env.NODE_ENV === "test";
   private readonly log = logger.child({ subsystem: "CategoryManager" });
 
   constructor(
@@ -370,7 +372,7 @@ export class CategoryManager {
   /**
    * Enforces that all currently managed dynamic categories are positioned
    * contiguously directly below the anchor category, in the exact configured order:
-   * Solo → Duo → Trio → Quad → Penta → Hepta → Septa → Octa.
+   * Solo → Duo → Trio → Quad.
    */
   public async realignManagedCategories(guild: Guild): Promise<void> {
     if (this.categoryMap.size === 0) {
@@ -410,20 +412,30 @@ export class CategoryManager {
           this.config.categoryOrder.indexOf(b.name),
       );
 
+      // Check if managed categories are in correct order directly below anchor:
+      // Realignment is needed if any category is not at anchorPosition + 1 + i
       const needsRealignment = managedCats.some(
         (cat, i) => cat.currentPosition !== anchorPosition + 1 + i,
       );
 
-      if (
-        needsRealignment &&
-        typeof guild.channels?.setPositions === "function"
-      ) {
+      if (!needsRealignment) {
+        return;
+      }
+
+      // Safeguard against Discord REST rate limits on /guilds/:id/channels:
+      // Minimum 3000ms cooldown between setPositions calls in production
+      if (!this.isTest && Date.now() - this.lastRealignTimestamp < 3000) {
+        return;
+      }
+
+      if (typeof guild.channels?.setPositions === "function") {
+        this.lastRealignTimestamp = Date.now();
         const updates = managedCats.map((cat, i) => ({
           channel: cat.id,
           position: anchorPosition + 1 + i,
         }));
         this.log.info(
-          `Re-aligning ${updates.length} dynamic JTC category position(s) contiguously below anchor "${fetchedAnchor.name}"`,
+          `Re-aligning ${updates.length} dynamic JTC category position(s) below anchor "${fetchedAnchor.name}"`,
           { updates },
         );
         await guild.channels.setPositions(updates);

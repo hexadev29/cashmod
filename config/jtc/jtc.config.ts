@@ -1,15 +1,10 @@
-export type JtcCategoryName =
-  "Solo" | "Duo" | "Trio" | "Quad" | "Penta" | "Hepta" | "Septa" | "Octa";
+export type JtcCategoryName = "Solo" | "Duo" | "Trio" | "Quad";
 
 export const JTC_CATEGORY_ORDER: readonly JtcCategoryName[] = [
   "Solo",
   "Duo",
   "Trio",
   "Quad",
-  "Penta",
-  "Hepta",
-  "Septa",
-  "Octa",
 ] as const;
 
 export interface JtcCategoryDefinition {
@@ -72,10 +67,6 @@ export const buildJtcConfig = (
   const duoTrigger = env.JTC_TRIGGER_DUO_ID ?? "100000000000000002";
   const trioTrigger = env.JTC_TRIGGER_TRIO_ID ?? "100000000000000003";
   const quadTrigger = env.JTC_TRIGGER_QUAD_ID ?? "100000000000000004";
-  const pentaTrigger = env.JTC_TRIGGER_PENTA_ID ?? "100000000000000005";
-  const heptaTrigger = env.JTC_TRIGGER_HEPTA_ID ?? "100000000000000006";
-  const septaTrigger = env.JTC_TRIGGER_SEPTA_ID ?? "100000000000000007";
-  const octaTrigger = env.JTC_TRIGGER_OCTA_ID ?? "100000000000000008";
 
   return {
     anchorCategoryId: env.JTC_ANCHOR_CATEGORY_ID ?? "123456789012345679",
@@ -85,10 +76,6 @@ export const buildJtcConfig = (
       Duo: { name: "Duo", userLimit: 2 },
       Trio: { name: "Trio", userLimit: 3 },
       Quad: { name: "Quad", userLimit: 4 },
-      Penta: { name: "Penta", userLimit: 5 },
-      Hepta: { name: "Hepta", userLimit: 6 },
-      Septa: { name: "Septa", userLimit: 7 },
-      Octa: { name: "Octa", userLimit: 8 },
     },
     triggers: {
       [soloTrigger]: {
@@ -115,32 +102,8 @@ export const buildJtcConfig = (
         roomNameTemplate: "Quad #{number}",
         userLimit: 4,
       },
-      [pentaTrigger]: {
-        triggerChannelId: pentaTrigger,
-        categoryName: "Penta",
-        roomNameTemplate: "Penta #{number}",
-        userLimit: 5,
-      },
-      [heptaTrigger]: {
-        triggerChannelId: heptaTrigger,
-        categoryName: "Hepta",
-        roomNameTemplate: "Hepta #{number}",
-        userLimit: 6,
-      },
-      [septaTrigger]: {
-        triggerChannelId: septaTrigger,
-        categoryName: "Septa",
-        roomNameTemplate: "Septa #{number}",
-        userLimit: 7,
-      },
-      [octaTrigger]: {
-        triggerChannelId: octaTrigger,
-        categoryName: "Octa",
-        roomNameTemplate: "Octa #{number}",
-        userLimit: 8,
-      },
     },
-    namingRegex: /^(Solo|Duo|Trio|Quad|Penta|Hepta|Septa|Octa)\s+#(\d+)$/i,
+    namingRegex: /^(Solo|Duo|Trio|Quad)\s+#(\d+)$/i,
     positioning: {
       sortDescending: false,
     },

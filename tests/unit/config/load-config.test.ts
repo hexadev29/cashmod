@@ -19,10 +19,6 @@ describe("loadConfig", () => {
       JTC_TRIGGER_DUO_ID: "148162180000000002",
       JTC_TRIGGER_TRIO_ID: "148162180000000003",
       JTC_TRIGGER_QUAD_ID: "148162180000000004",
-      JTC_TRIGGER_PENTA_ID: "148162180000000005",
-      JTC_TRIGGER_HEPTA_ID: "148162180000000006",
-      JTC_TRIGGER_SEPTA_ID: "148162180000000007",
-      JTC_TRIGGER_OCTA_ID: "148162180000000008",
       JTC_PRIVATE_ANCHOR_CATEGORY_ID: "148162180000000099",
       JTC_PRIVATE_TRIGGER_ID: "148162180000000100",
     };
@@ -39,9 +35,9 @@ describe("loadConfig", () => {
     );
     expect(config.jtc.triggers["148162180000000001"].categoryName).toBe("Solo");
 
-    expect(config.jtc.triggers["148162180000000006"]).toBeDefined();
-    expect(config.jtc.triggers["148162180000000006"].categoryName).toBe(
-      "Hepta",
+    expect(config.jtc.triggers["148162180000000004"]).toBeDefined();
+    expect(config.jtc.triggers["148162180000000004"].categoryName).toBe(
+      "Quad",
     );
   });
 });
