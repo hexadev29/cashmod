@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build Output
+dist/
+
+# Environment and Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Logs and Diagnostics
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test and Coverage
+coverage/
+.vitest/
+
+# OS and Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

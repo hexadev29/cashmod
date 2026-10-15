@@ -1,0 +1,30 @@
+{
+  "name": "cash-mod",
+  "version": "1.0.0",
+  "description": "Single-guild TypeScript Discord bot featuring JTC voice rooms and automatic handler loader",
+  "main": "dist/src/main.js",
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc",
+    "start": "node dist/src/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "format": "prettier --check \"{src,config,tests,docs}/**/*.{ts,json,md}\"",
+    "format:fix": "prettier --write \"{src,config,tests,docs}/**/*.{ts,json,md}\""
+  },
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
+  }
+}
