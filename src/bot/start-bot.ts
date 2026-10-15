@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Client } from "discord.js";
+import { Events, type Client } from "discord.js";
 import { loadConfig } from "../core/config/load-config.js";
 import { PermissionService } from "../core/permissions/permission-service.js";
 import { JtcService } from "../modules/jtc/jtc-service.js";
@@ -53,7 +53,7 @@ export const startBot = async (): Promise<StartBotResult> => {
   });
 
   // 6. Register Ready Listener for JTC Reconciliation & Summary Display
-  client.once("ready", async (readyClient) => {
+  client.once(Events.ClientReady, async (readyClient) => {
     logger.info(
       `Discord client ready as ${readyClient.user.tag} (${readyClient.user.id})`,
     );

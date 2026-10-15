@@ -73,7 +73,7 @@ describe("validateHandler", () => {
     const validModule = {
       default: {
         name: "testHandler",
-        event: "ready",
+        event: "clientReady",
         execute: async () => {},
       },
     };
@@ -81,14 +81,14 @@ describe("validateHandler", () => {
     const registered = new Set<string>();
     const handler = validateHandler(validModule, "/mock/path.ts", registered);
     expect(handler.name).toBe("testHandler");
-    expect(handler.event).toBe("ready");
+    expect(handler.event).toBe("clientReady");
   });
 
   it("rejects an export missing the execute function", () => {
     const invalidModule = {
       default: {
         name: "testHandler",
-        event: "ready",
+        event: "clientReady",
       },
     };
 
@@ -102,7 +102,7 @@ describe("validateHandler", () => {
     const invalidModule = {
       default: {
         name: "   ",
-        event: "ready",
+        event: "clientReady",
         execute: async () => {},
       },
     };
@@ -117,7 +117,7 @@ describe("validateHandler", () => {
     const module1 = {
       default: {
         name: "duplicateName",
-        event: "ready",
+        event: "clientReady",
         execute: async () => {},
       },
     };
