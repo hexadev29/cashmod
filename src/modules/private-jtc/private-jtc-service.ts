@@ -12,6 +12,7 @@ import { JtcOperationQueue, TaskPriority } from "../jtc/jtc-queue.js";
 import { PrivateCategoryManager } from "./private-category-manager.js";
 import { PrivateJtcStateStore } from "./private-jtc-state-store.js";
 import { buildPrivateInterfaceMessage } from "./private-interface-builder.js";
+import { PrivateJtcInteractionManager } from "./private-jtc-interaction-manager.js";
 import type { PrivateJtcRoomRecord } from "./private-jtc-types.js";
 import { logger } from "../../diagnostics/logger.js";
 
@@ -28,6 +29,7 @@ export class PrivateJtcService {
   private readonly stateStore: PrivateJtcStateStore;
   private readonly categoryManager: PrivateCategoryManager;
   private readonly queue: JtcOperationQueue;
+  private readonly interactionManager: PrivateJtcInteractionManager;
   private readonly log = logger.child({ subsystem: "PrivateJtcService" });
 
   constructor(
@@ -45,6 +47,14 @@ export class PrivateJtcService {
       new PrivateCategoryManager(this.config.privateJtc, this.stateStore);
     this.queue =
       queue ?? new JtcOperationQueue(this.config.jtc.queue);
+    this.interactionManager = new PrivateJtcInteractionManager(
+      this.config.privateJtc,
+      this,
+    );
+  }
+
+  public getInteractionManager(): PrivateJtcInteractionManager {
+    return this.interactionManager;
   }
 
   public getStateStore(): PrivateJtcStateStore {
