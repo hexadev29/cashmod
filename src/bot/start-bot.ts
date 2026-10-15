@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { Events, type Client } from "discord.js";
+import { ActivityType, Events, type Client } from "discord.js";
 import { loadConfig } from "../core/config/load-config.js";
 import { PermissionService } from "../core/permissions/permission-service.js";
 import { JtcService } from "../modules/jtc/jtc-service.js";
@@ -46,6 +46,19 @@ export const startBot = async (): Promise<StartBotResult> => {
   // 4. Create Discord Client
   const client = createClient(config);
 
+  // Attach rate-limit observability to Discord REST client
+  client.rest.on("rateLimited", (rateLimitData) => {
+    logger.warn(
+      `Discord REST rate limit encountered on route "${rateLimitData.route}" (retryAfter: ${rateLimitData.retryAfter}ms, global: ${rateLimitData.global})`,
+      {
+        route: rateLimitData.route,
+        retryAfter: rateLimitData.retryAfter,
+        global: rateLimitData.global,
+        limit: rateLimitData.limit,
+      },
+    );
+  });
+
   // 5. Discover & Register Handlers
   const loaderSummary = await loadAndRegisterHandlers(client, {
     handlersDir,
@@ -73,11 +86,28 @@ export const startBot = async (): Promise<StartBotResult> => {
       );
     }
 
+    const activityConfig = config.discord.activity;
+    let activitySummaryText: string | undefined;
+
+    if (activityConfig) {
+      try {
+        readyClient.user.setActivity(activityConfig.name, {
+          type: activityConfig.type,
+        });
+        const typeName = ActivityType[activityConfig.type] ?? "Activity";
+        activitySummaryText = `${typeName} to ${activityConfig.name}`;
+        logger.info(`Bot activity set to: ${activitySummaryText}`);
+      } catch (actErr: any) {
+        logger.warn(`Failed to set bot activity: ${actErr?.message}`);
+      }
+    }
+
     const categoriesList = Object.values(config.jtc.categories);
 
     printStartupSummary({
       botTag: readyClient.user.tag,
       guildId: config.discord.guildId,
+      activity: activitySummaryText,
       nodeVersion: process.version,
       logLevel: config.diagnostics.logLevel,
       configValid: true,

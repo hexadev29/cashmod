@@ -55,6 +55,43 @@ export const extractUsedRoomNumbers = (
   return numbers;
 };
 
+export interface ExistingRoomInfo {
+  id: string;
+  roomNumber: number;
+  memberCount: number;
+}
+
+/**
+ * Filters for empty rooms (memberCount === 0) and sorts them in ascending order of room number.
+ * Example: rooms with numbers [7, 3, 6] with 0 members => returns rooms sorted as [3, 6, 7].
+ */
+export const findEmptyRoomsAscending = (
+  rooms: readonly ExistingRoomInfo[],
+): ExistingRoomInfo[] => {
+  return rooms
+    .filter((r) => r.memberCount === 0)
+    .slice()
+    .sort((a, b) => a.roomNumber - b.roomNumber);
+};
+
+/**
+ * Selects the lowest-numbered empty room to recycle.
+ * Excludes any room IDs present in reservedChannelIds.
+ * Example: if Solo #3, Solo #6, Solo #7 are empty and #3 is reserved, returns Solo #6.
+ */
+export const selectBestEmptyRoomToRecycle = (
+  rooms: readonly ExistingRoomInfo[],
+  reservedChannelIds?: ReadonlySet<string>,
+): ExistingRoomInfo | null => {
+  const availableRooms =
+    reservedChannelIds && reservedChannelIds.size > 0
+      ? rooms.filter((r) => !reservedChannelIds.has(r.id))
+      : rooms;
+  const emptySorted = findEmptyRoomsAscending(availableRooms);
+  return emptySorted.length > 0 ? emptySorted[0] : null;
+};
+
+
 /**
  * Simple asynchronous mutex lock to serialize operations per key (e.g. per category or per member).
  */

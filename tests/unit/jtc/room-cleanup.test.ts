@@ -81,4 +81,33 @@ describe("RoomCleanupHandler", () => {
     expect(result).toBe(true);
     expect(deleteMock).toHaveBeenCalledTimes(1);
   });
+
+  it("aborts cleanup if cancelPendingCleanup was called (e.g. room recycled by new join)", async () => {
+    const deleteMock = vi.fn().mockResolvedValue(undefined);
+    const handler = new RoomCleanupHandler({
+      delayMs: 20,
+      recheckEmpty: false,
+      maxRetries: 1,
+      retryDelayMs: 0,
+    });
+
+    const mockChannel = {
+      id: "ch-recycled",
+      name: "Solo #3",
+      deletable: true,
+      members: { size: 0 },
+      delete: deleteMock,
+    } as unknown as VoiceChannel;
+
+    // Start cleanup task
+    const cleanupPromise = handler.cleanupChannel(mockChannel, () => true);
+
+    // Mid-flight / during delay, cancel cleanup because room was claimed
+    handler.cancelPendingCleanup("ch-recycled");
+
+    const result = await cleanupPromise;
+    expect(result).toBe(false);
+    expect(deleteMock).not.toHaveBeenCalled();
+  });
 });
+

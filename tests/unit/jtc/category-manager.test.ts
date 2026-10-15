@@ -74,6 +74,14 @@ describe("CategoryManager", () => {
           mockChannels.set(newId, newChannel);
           return newChannel;
         }),
+        setPositions: vi.fn().mockImplementation(async (positions: any[]) => {
+          for (const pos of positions) {
+            const ch = mockChannels.get(pos.channel);
+            if (ch) {
+              ch.position = pos.position;
+            }
+          }
+        }),
       },
     } as unknown as Guild;
   };
@@ -248,4 +256,60 @@ describe("CategoryManager", () => {
     expect(manager.hasCategory("Solo")).toBe(true);
     expect(mockChannels.has(soloId)).toBe(true);
   });
+
+  it("creates Septa directly below anchor when no other dynamic categories exist", async () => {
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
+
+    // Anchor is at position 5
+    const septaId = await manager.getOrCreateCategory(guild, "Septa");
+    const septaChannel = mockChannels.get(septaId);
+
+    // Must be placed directly below anchor (position 6), NOT skipped down to position 12
+    expect(septaChannel.position).toBe(6);
+  });
+
+  it("places Solo above Trio, and Duo between Solo and Trio", async () => {
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
+
+    // 1. Trio is created first when Solo does not exist
+    const trioId = await manager.getOrCreateCategory(guild, "Trio");
+    const trioChannel = mockChannels.get(trioId);
+    expect(trioChannel.position).toBe(6); // Directly below anchor (pos 5 + 1)
+
+    // 2. Solo is created when Trio exists -> Solo should be created ABOVE Trio
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
+    const soloChannel = mockChannels.get(soloId);
+    // After realignment/creation: Solo is at 6, Trio is shifted to 7
+    expect(soloChannel.position).toBe(6);
+    expect(mockChannels.get(trioId).position).toBe(7);
+
+    // 3. Duo is created when Solo and Trio exist -> Duo should be created UNDER Solo and ABOVE Trio
+    const duoId = await manager.getOrCreateCategory(guild, "Duo");
+    const duoChannel = mockChannels.get(duoId);
+    // After realignment/creation: Solo is at 6, Duo is at 7, Trio is at 8
+    expect(soloChannel.position).toBe(6);
+    expect(duoChannel.position).toBe(7);
+    expect(mockChannels.get(trioId).position).toBe(8);
+  });
+
+  it("realigns existing out-of-order categories upon initFromState", async () => {
+    // Simulate Septa existing in Discord below other server categories (e.g. at position 12)
+    const existingSeptaId = "cat-existing-septa";
+    mockChannels.set(existingSeptaId, {
+      id: existingSeptaId,
+      name: "Septa",
+      type: ChannelType.GuildCategory,
+      position: 12,
+    });
+
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
+
+    expect(manager.getCategoryId("Septa")).toBe(existingSeptaId);
+    // Realignment automatically moved Septa from position 12 to directly below anchor (position 6)
+    expect(mockChannels.get(existingSeptaId).position).toBe(6);
+  });
 });
+

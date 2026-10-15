@@ -37,8 +37,20 @@ export interface JtcCleanupConfig {
 }
 
 export interface JtcPermissionsMapping {
-  ownerPolicyKey: "roomOwner";
   everyonePolicyKey: "everyone";
+  quarantinePolicyKey?: "quarantine";
+  superFocusPolicyKey?: "superFocus";
+  vcRestrictedPolicyKey?: "vcRestricted";
+  enableOwnerPermissions?: boolean;
+  ownerPolicyKey?: "roomOwner";
+}
+
+export interface JtcQueueConfig {
+  concurrency: number;
+  minTaskDelayMs: number;
+  maxQueueSize: number;
+  taskTimeoutMs: number;
+  enableEmptyRoomRecycling: boolean;
 }
 
 export interface JtcConfig {
@@ -49,6 +61,7 @@ export interface JtcConfig {
   namingRegex: RegExp;
   positioning: JtcPositioningConfig;
   cleanup: JtcCleanupConfig;
+  queue: JtcQueueConfig;
   permissions: JtcPermissionsMapping;
 }
 
@@ -137,9 +150,20 @@ export const buildJtcConfig = (
       maxRetries: 3,
       retryDelayMs: 500,
     },
+    queue: {
+      concurrency: 1,
+      minTaskDelayMs: 50,
+      maxQueueSize: 100,
+      taskTimeoutMs: 15000,
+      enableEmptyRoomRecycling: true,
+    },
     permissions: {
-      ownerPolicyKey: "roomOwner",
       everyonePolicyKey: "everyone",
+      quarantinePolicyKey: "quarantine",
+      superFocusPolicyKey: "superFocus",
+      vcRestrictedPolicyKey: "vcRestricted",
+      enableOwnerPermissions: false,
+      ownerPolicyKey: "roomOwner",
     },
   };
 };

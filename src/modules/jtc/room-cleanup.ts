@@ -6,8 +6,19 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class RoomCleanupHandler {
   private log = logger.child({ subsystem: "JtcCleanup" });
+  private readonly cancelledChannels = new Set<string>();
 
   constructor(private readonly config: JtcCleanupConfig) {}
+
+  /**
+   * Cancels any pending or delayed cleanup for the specified channel ID.
+   * Call this when a room is recycled/adopted by a new join before it is deleted.
+   */
+  public cancelPendingCleanup(channelId: string): boolean {
+    this.cancelledChannels.add(channelId);
+    this.log.debug(`Cancelled pending cleanup for channel ${channelId}`);
+    return true;
+  }
 
   /**
    * Safely cleans up an empty JTC voice channel after verifying it remains empty.
@@ -19,6 +30,14 @@ export class RoomCleanupHandler {
     if (!channel || !channel.deletable) {
       this.log.debug(
         `Channel ${channel?.id ?? "unknown"} is not deletable or missing.`,
+      );
+      return false;
+    }
+
+    if (this.cancelledChannels.has(channel.id)) {
+      this.cancelledChannels.delete(channel.id);
+      this.log.info(
+        `Aborting cleanup for room "${channel.name}" (${channel.id}): room was adopted/recycled.`,
       );
       return false;
     }
@@ -41,6 +60,14 @@ export class RoomCleanupHandler {
     // Delay before recheck
     if (this.config.delayMs > 0) {
       await sleep(this.config.delayMs);
+    }
+
+    if (this.cancelledChannels.has(channel.id)) {
+      this.cancelledChannels.delete(channel.id);
+      this.log.info(
+        `Aborting cleanup for room "${channel.name}" (${channel.id}) after delay: room was adopted/recycled.`,
+      );
+      return false;
     }
 
     // Recheck emptiness if configured

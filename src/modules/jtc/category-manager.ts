@@ -5,6 +5,10 @@ import type {
 } from "../../../config/jtc/jtc.config.js";
 import { JtcStateStore } from "./jtc-state-store.js";
 import { AsyncLock } from "./room-allocator.js";
+import {
+  calculateCategoryTargetPosition,
+  type ExistingCategoryInfo,
+} from "./room-positioner.js";
 import { logger } from "../../diagnostics/logger.js";
 
 export class CategoryManager {
@@ -129,6 +133,11 @@ export class CategoryManager {
     this.log.info(
       `JTC dynamic categories initialized from state (${this.categoryMap.size} active category/categories present).`,
     );
+
+    // Realign any existing categories to ensure contiguous order below anchor
+    if (this.categoryMap.size > 0) {
+      await this.realignManagedCategories(guild);
+    }
   }
 
   /**
@@ -205,12 +214,27 @@ export class CategoryManager {
         throw new Error(`Anchor category verification failed: ${err?.message}`);
       }
 
-      const catIndex = this.config.categoryOrder.indexOf(categoryName);
-      const targetPosition =
-        anchorChannel.position + 1 + (catIndex >= 0 ? catIndex : 0);
+      // Collect existing active managed categories with their current positions
+      const existingCategories: ExistingCategoryInfo[] = [];
+      for (const [name, id] of this.categoryMap.entries()) {
+        const ch = guildChannels.get(id);
+        if (ch && ch.type === ChannelType.GuildCategory) {
+          existingCategories.push({
+            name,
+            position: (ch as CategoryChannel).position,
+          });
+        }
+      }
+
+      const targetPosition = calculateCategoryTargetPosition(
+        categoryName,
+        this.config.categoryOrder,
+        existingCategories,
+        anchorChannel.position,
+      );
 
       this.log.info(
-        `Dynamically creating category "${categoryName}" at target position ${targetPosition} below anchor "${anchorChannel.name}"`,
+        `Dynamically creating category "${categoryName}" at target position ${targetPosition} relative to anchor "${anchorChannel.name}"`,
       );
 
       const created = (await guild.channels.create({
@@ -227,6 +251,9 @@ export class CategoryManager {
       this.log.info(
         `Created dynamic category "${categoryName}" with generated ID: ${created.id}`,
       );
+
+      // Re-align all managed categories to enforce contiguous ordering below anchor
+      await this.realignManagedCategories(guild);
 
       return created.id;
     } finally {
@@ -287,6 +314,9 @@ export class CategoryManager {
       this.categoryMap.delete(categoryName);
       this.idToCategoryName.delete(categoryId);
       await this.persistState(guild.id);
+      if (this.categoryMap.size > 0) {
+        await this.realignManagedCategories(guild);
+      }
       return true;
     } finally {
       release();
@@ -336,4 +366,75 @@ export class CategoryManager {
     }
     return this.categoryMap;
   }
+
+  /**
+   * Enforces that all currently managed dynamic categories are positioned
+   * contiguously directly below the anchor category, in the exact configured order:
+   * Solo → Duo → Trio → Quad → Penta → Hepta → Septa → Octa.
+   */
+  public async realignManagedCategories(guild: Guild): Promise<void> {
+    if (this.categoryMap.size === 0) {
+      return;
+    }
+
+    try {
+      const anchorId = this.config.anchorCategoryId;
+      const fetchedAnchor = await guild.channels.fetch(anchorId);
+      if (!fetchedAnchor || fetchedAnchor.type !== ChannelType.GuildCategory) {
+        return;
+      }
+      const anchorPosition = (fetchedAnchor as CategoryChannel).position;
+
+      const guildChannels = await guild.channels.fetch();
+      const managedCats: { id: string; name: JtcCategoryName; currentPosition: number }[] = [];
+
+      for (const [name, id] of this.categoryMap.entries()) {
+        const ch = guildChannels.get(id);
+        if (ch && ch.type === ChannelType.GuildCategory) {
+          managedCats.push({
+            id,
+            name,
+            currentPosition: (ch as CategoryChannel).position,
+          });
+        }
+      }
+
+      if (managedCats.length === 0) {
+        return;
+      }
+
+      // Sort existing managed categories by configured categoryOrder
+      managedCats.sort(
+        (a, b) =>
+          this.config.categoryOrder.indexOf(a.name) -
+          this.config.categoryOrder.indexOf(b.name),
+      );
+
+      const needsRealignment = managedCats.some(
+        (cat, i) => cat.currentPosition !== anchorPosition + 1 + i,
+      );
+
+      if (
+        needsRealignment &&
+        typeof guild.channels?.setPositions === "function"
+      ) {
+        const updates = managedCats.map((cat, i) => ({
+          channel: cat.id,
+          position: anchorPosition + 1 + i,
+        }));
+        this.log.info(
+          `Re-aligning ${updates.length} dynamic JTC category position(s) contiguously below anchor "${fetchedAnchor.name}"`,
+          { updates },
+        );
+        await guild.channels.setPositions(updates);
+      }
+    } catch (err: any) {
+      this.log.warn(
+        `Failed to realign managed category positions: ${err?.message}`,
+        undefined,
+        err,
+      );
+    }
+  }
 }
+

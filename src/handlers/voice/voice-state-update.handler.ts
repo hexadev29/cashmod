@@ -44,7 +44,7 @@ export const voiceStateUpdateHandler: EventHandler<"voiceStateUpdate"> = {
     // A. Handle leave or move from old channel
     if (oldChannelId && oldState.channel && oldState.channel.isVoiceBased()) {
       try {
-        await jtcService.handleVoiceLeave(oldState.channel as VoiceChannel);
+        await jtcService.queueVoiceLeave(oldState.channel as VoiceChannel);
       } catch (leaveErr: any) {
         log.error(
           `Error handling voice leave for channel ${oldChannelId}: ${leaveErr?.message}`,
@@ -57,7 +57,17 @@ export const voiceStateUpdateHandler: EventHandler<"voiceStateUpdate"> = {
     // B. Handle join or move to new channel
     if (newChannelId && newState.channel) {
       try {
-        await jtcService.handleVoiceJoin(member, newChannelId);
+        if (config.jtc.triggers[newChannelId]) {
+          await jtcService.queueVoiceJoin(member, newChannelId);
+        } else if (
+          newState.channel.isVoiceBased() &&
+          jtcService.isEligibleJtcChannel(newState.channel as VoiceChannel)
+        ) {
+          await jtcService.queueDirectJoin(
+            member,
+            newState.channel as VoiceChannel,
+          );
+        }
       } catch (joinErr: any) {
         log.error(
           `Error handling voice join for member ${member.id}: ${joinErr?.message}`,

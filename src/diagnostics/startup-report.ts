@@ -3,6 +3,7 @@ import { theme } from "./console-theme.js";
 export interface StartupSummary {
   botTag: string;
   guildId: string;
+  activity?: string;
   nodeVersion: string;
   pnpmVersion?: string;
   logLevel: string;
@@ -95,6 +96,11 @@ export const printStartupSummary = (summary: StartupSummary): void => {
   console.log(
     `  ${theme.dim("Bot User:")}         ${theme.green(summary.botTag)}`,
   );
+  if (summary.activity) {
+    console.log(
+      `  ${theme.dim("Activity:")}         ${theme.cyan(summary.activity)}`,
+    );
+  }
   console.log(
     `  ${theme.dim("Target Guild ID:")}  ${theme.yellow(summary.guildId)}`,
   );

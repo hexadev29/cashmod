@@ -53,6 +53,18 @@ export const validateConfig = (config: AppConfig): void => {
       message: `guildId must be a valid 17-20 digit Discord snowflake string, received: "${config.discord.guildId}".`,
     });
   }
+  if (config.discord.activity) {
+    if (
+      !config.discord.activity.name ||
+      typeof config.discord.activity.name !== "string" ||
+      config.discord.activity.name.trim().length === 0
+    ) {
+      errors.push({
+        field: "discord.activity.name",
+        message: "discord.activity.name cannot be empty.",
+      });
+    }
+  }
 
   // 3. Permissions Policy Validation
   if (!config.permissions.policies.everyone) {
@@ -61,12 +73,49 @@ export const validateConfig = (config: AppConfig): void => {
       message: 'Missing "everyone" policy in global permissions configuration.',
     });
   }
-  if (!config.permissions.policies.roomOwner) {
+  if (
+    config.jtc.permissions.enableOwnerPermissions &&
+    !config.permissions.policies.roomOwner
+  ) {
     errors.push({
       field: "permissions.policies.roomOwner",
       message:
-        'Missing "roomOwner" policy in global permissions configuration.',
+        'Missing "roomOwner" policy in global permissions configuration while enableOwnerPermissions is true.',
     });
+  }
+  if (config.permissions.roles) {
+    const { quarantineRoleId, superFocusRoleId, vcRestrictedRoleId } =
+      config.permissions.roles;
+    if (
+      quarantineRoleId &&
+      quarantineRoleId.trim() !== "" &&
+      !isSnowflake(quarantineRoleId)
+    ) {
+      errors.push({
+        field: "permissions.roles.quarantineRoleId",
+        message: `quarantineRoleId must be a valid Discord snowflake if specified, received: "${quarantineRoleId}".`,
+      });
+    }
+    if (
+      superFocusRoleId &&
+      superFocusRoleId.trim() !== "" &&
+      !isSnowflake(superFocusRoleId)
+    ) {
+      errors.push({
+        field: "permissions.roles.superFocusRoleId",
+        message: `superFocusRoleId must be a valid Discord snowflake if specified, received: "${superFocusRoleId}".`,
+      });
+    }
+    if (
+      vcRestrictedRoleId &&
+      vcRestrictedRoleId.trim() !== "" &&
+      !isSnowflake(vcRestrictedRoleId)
+    ) {
+      errors.push({
+        field: "permissions.roles.vcRestrictedRoleId",
+        message: `vcRestrictedRoleId must be a valid Discord snowflake if specified, received: "${vcRestrictedRoleId}".`,
+      });
+    }
   }
 
   // 4. JTC Anchor Category Validation
@@ -182,6 +231,28 @@ export const validateConfig = (config: AppConfig): void => {
       field: "jtc.cleanup.maxRetries",
       message: "cleanup.maxRetries must be a non-negative integer.",
     });
+  }
+
+  // 9. Queue Validation
+  if (config.jtc.queue) {
+    if (
+      typeof config.jtc.queue.concurrency !== "number" ||
+      config.jtc.queue.concurrency < 1
+    ) {
+      errors.push({
+        field: "jtc.queue.concurrency",
+        message: "queue.concurrency must be a positive integer (>= 1).",
+      });
+    }
+    if (
+      typeof config.jtc.queue.minTaskDelayMs !== "number" ||
+      config.jtc.queue.minTaskDelayMs < 0
+    ) {
+      errors.push({
+        field: "jtc.queue.minTaskDelayMs",
+        message: "queue.minTaskDelayMs must be a non-negative number.",
+      });
+    }
   }
 
   if (errors.length > 0) {

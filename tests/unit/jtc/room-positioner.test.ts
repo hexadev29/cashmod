@@ -1,8 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   calculateTargetPosition,
+  calculateCategoryTargetPosition,
   type SiblingChannelInfo,
+  type ExistingCategoryInfo,
 } from "../../../src/modules/jtc/room-positioner.js";
+import { JTC_CATEGORY_ORDER } from "../../../config/jtc/jtc.config.js";
 
 describe("calculateTargetPosition", () => {
   it("returns 0 when there are no siblings", () => {
@@ -39,3 +42,69 @@ describe("calculateTargetPosition", () => {
     expect(calculateTargetPosition(siblings, 4)).toBe(8);
   });
 });
+
+describe("calculateCategoryTargetPosition", () => {
+  const anchorPos = 2;
+
+  it("places initial category directly below anchor regardless of categoryOrder index", () => {
+    // When no dynamic categories exist yet, even Septa should be created directly below anchor (anchorPos + 1)
+    expect(
+      calculateCategoryTargetPosition("Septa", JTC_CATEGORY_ORDER, [], anchorPos),
+    ).toBe(3);
+
+    expect(
+      calculateCategoryTargetPosition("Solo", JTC_CATEGORY_ORDER, [], anchorPos),
+    ).toBe(3);
+  });
+
+  it("places Duo under Solo when Solo exists", () => {
+    const existing: ExistingCategoryInfo[] = [{ name: "Solo", position: 3 }];
+    // Duo comes after Solo in category order, so it goes after Solo (3 + 1 = 4)
+    expect(
+      calculateCategoryTargetPosition("Duo", JTC_CATEGORY_ORDER, existing, anchorPos),
+    ).toBe(4);
+  });
+
+  it("places Solo above Trio when Trio exists and Solo does not", () => {
+    const existing: ExistingCategoryInfo[] = [{ name: "Trio", position: 3 }];
+    // Solo comes before Trio in category order, so it takes Trio's position (3), pushing Trio down
+    expect(
+      calculateCategoryTargetPosition("Solo", JTC_CATEGORY_ORDER, existing, anchorPos),
+    ).toBe(3);
+  });
+
+  it("places Duo under Solo and above Trio when Solo and Trio exist", () => {
+    const existing: ExistingCategoryInfo[] = [
+      { name: "Solo", position: 3 },
+      { name: "Trio", position: 4 },
+    ];
+    // Duo comes before Trio, so it takes Trio's position (4), pushing Trio to 5
+    expect(
+      calculateCategoryTargetPosition("Duo", JTC_CATEGORY_ORDER, existing, anchorPos),
+    ).toBe(4);
+  });
+
+  it("places Septa under Solo and Duo when only Solo and Duo exist", () => {
+    const existing: ExistingCategoryInfo[] = [
+      { name: "Solo", position: 3 },
+      { name: "Duo", position: 4 },
+    ];
+    // Septa comes after Duo, so it goes after Duo (4 + 1 = 5)
+    expect(
+      calculateCategoryTargetPosition("Septa", JTC_CATEGORY_ORDER, existing, anchorPos),
+    ).toBe(5);
+  });
+
+  it("places Quad between Trio and Septa", () => {
+    const existing: ExistingCategoryInfo[] = [
+      { name: "Solo", position: 3 },
+      { name: "Trio", position: 4 },
+      { name: "Septa", position: 5 },
+    ];
+    // Quad comes before Septa, so it takes Septa's position (5), pushing Septa to 6
+    expect(
+      calculateCategoryTargetPosition("Quad", JTC_CATEGORY_ORDER, existing, anchorPos),
+    ).toBe(5);
+  });
+});
+

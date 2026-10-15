@@ -1,8 +1,8 @@
 import "dotenv/config";
 import dotenv from "dotenv";
 import type { AppConfig } from "./config-types.js";
-import { discordConfig } from "../../../config/discord/discord.config.js";
-import { permissionsConfig } from "../../../config/permissions/permissions.config.js";
+import { buildDiscordConfig } from "../../../config/discord/discord.config.js";
+import { buildPermissionsConfig } from "../../../config/permissions/permissions.config.js";
 import { buildJtcConfig } from "../../../config/jtc/jtc.config.js";
 import { diagnosticsConfig } from "../../../config/diagnostics/diagnostics.config.js";
 import { validateConfig } from "./validate-config.js";
@@ -38,11 +38,8 @@ export const loadConfig = (
       token,
       clientId: envSource.DISCORD_CLIENT_ID,
     },
-    discord: {
-      ...discordConfig,
-      guildId: envSource.DISCORD_GUILD_ID ?? discordConfig.guildId,
-    },
-    permissions: permissionsConfig,
+    discord: buildDiscordConfig(envSource),
+    permissions: buildPermissionsConfig(envSource),
     jtc: buildJtcConfig(envSource),
     diagnostics: {
       ...diagnosticsConfig,

@@ -13,6 +13,10 @@ const createValidConfig = (): AppConfig => ({
   },
   discord: {
     guildId: "123456789012345678",
+    activity: {
+      name: "CA Study Hub",
+      type: 2,
+    },
     clientOptions: { intents: [] },
   },
   permissions: {
@@ -105,6 +109,20 @@ describe("validateConfig", () => {
   it("fails when trigger roomNameTemplate does not include {number}", () => {
     const config = createValidConfig();
     config.jtc.triggers["100000000000000001"].roomNameTemplate = "Solo Room";
+    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
+  });
+
+  it("fails when discord.activity.name is empty", () => {
+    const config = createValidConfig();
+    config.discord.activity.name = "   ";
+    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
+  });
+
+  it("fails when permissions role ID is not a valid snowflake", () => {
+    const config = createValidConfig();
+    config.permissions.roles = {
+      quarantineRoleId: "not-a-snowflake",
+    };
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
   });
 });

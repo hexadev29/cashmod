@@ -10,6 +10,8 @@ import {
   AsyncLock,
   extractUsedRoomNumbers,
   findFirstMissingPositiveNumber,
+  selectBestEmptyRoomToRecycle,
+  type ExistingRoomInfo,
 } from "./room-allocator.js";
 import {
   calculateTargetPosition,
@@ -21,15 +23,19 @@ import {
   type ReconciliationResult,
 } from "./jtc-reconciliation.js";
 import { CategoryManager } from "./category-manager.js";
+import { JtcOperationQueue, TaskPriority } from "./jtc-queue.js";
 import type { ManagedRoomRecord, RoomAllocationResult } from "./jtc-types.js";
 import { logger } from "../../diagnostics/logger.js";
 import type { JtcCategoryName } from "../../../config/jtc/jtc.config.js";
 
 export class JtcService {
   private readonly managedRooms = new Map<string, ManagedRoomRecord>();
+  private readonly reservedChannelIds = new Set<string>();
+  private readonly reservedChannelOwners = new Map<string, string>();
   private readonly asyncLock = new AsyncLock();
   private readonly cleanupHandler: RoomCleanupHandler;
   private readonly categoryManager: CategoryManager;
+  private readonly queue: JtcOperationQueue;
   private readonly log = logger.child({ subsystem: "JtcService" });
 
   constructor(
@@ -37,19 +43,30 @@ export class JtcService {
     private readonly permissionService: PermissionService,
     cleanupHandler?: RoomCleanupHandler,
     categoryManager?: CategoryManager,
+    queue?: JtcOperationQueue,
   ) {
     this.cleanupHandler =
       cleanupHandler ?? new RoomCleanupHandler(this.config.jtc.cleanup);
     this.categoryManager =
       categoryManager ?? new CategoryManager(this.config.jtc);
+    this.queue =
+      queue ?? new JtcOperationQueue(this.config.jtc.queue);
   }
 
   public getCategoryManager(): CategoryManager {
     return this.categoryManager;
   }
 
+  public getQueue(): JtcOperationQueue {
+    return this.queue;
+  }
+
   public isManagedRoom(channelId: string): boolean {
     return this.managedRooms.has(channelId);
+  }
+
+  public getManagedRoom(channelId: string): ManagedRoomRecord | undefined {
+    return this.managedRooms.get(channelId);
   }
 
   public registerAdoptedRoom(
@@ -118,6 +135,7 @@ export class JtcService {
       const allChannels = await guild.channels.fetch();
       const siblings: SiblingChannelInfo[] = [];
       const siblingNames: string[] = [];
+      const existingRooms: ExistingRoomInfo[] = [];
 
       for (const [, ch] of allChannels) {
         if (!ch || !ch.isVoiceBased() || ch.parentId !== targetCategoryId)
@@ -133,6 +151,99 @@ export class JtcService {
               roomNumber: num,
               position: ch.position,
             });
+            const voiceCh = ch as VoiceChannel;
+            existingRooms.push({
+              id: ch.id,
+              roomNumber: num,
+              memberCount: voiceCh.members?.size ?? 0,
+            });
+          }
+        }
+      }
+
+      // 1.5 Check if an empty managed room exists in this category to recycle
+      if (this.config.jtc.queue?.enableEmptyRoomRecycling) {
+        const bestEmpty = selectBestEmptyRoomToRecycle(
+          existingRooms,
+          this.reservedChannelIds,
+        );
+        if (bestEmpty) {
+          const recycledChannel = allChannels.get(bestEmpty.id) as VoiceChannel;
+          if (recycledChannel) {
+            // Reserve room immediately so concurrent operations skip it
+            this.reservedChannelIds.add(bestEmpty.id);
+            this.reservedChannelOwners.set(bestEmpty.id, member.id);
+            try {
+              this.log.info(
+                `Recycling empty room "${recycledChannel.name}" (#${bestEmpty.roomNumber}) for member "${member.user.tag}" (${member.id})`,
+              );
+
+              // Cancel any pending cleanup in both the cleanup handler and operation queue
+              this.cleanupHandler.cancelPendingCleanup(bestEmpty.id);
+              this.queue.cancelByTag(`cleanup:${bestEmpty.id}`);
+
+              // Apply permission overwrites for the new owner
+              const permissionOverwrites =
+                this.permissionService.buildJtcRoomOverwrites({
+                  guildId: guild.id,
+                  ownerId: member.id,
+                });
+
+              try {
+                if (
+                  recycledChannel.permissionOverwrites &&
+                  typeof (recycledChannel.permissionOverwrites as any).set ===
+                    "function"
+                ) {
+                  await (recycledChannel.permissionOverwrites as any).set(
+                    permissionOverwrites,
+                  );
+                }
+              } catch (permErr: any) {
+                this.log.warn(
+                  `Failed to update permissions on recycled room: ${permErr?.message}`,
+                );
+              }
+
+              // Move member to the recycled room
+              try {
+                await member.voice.setChannel(
+                  recycledChannel,
+                  "Cash Mod JTC move to recycled room",
+                );
+              } catch (moveErr: any) {
+                this.log.warn(
+                  `Failed to move member "${member.user.tag}" to recycled room "${recycledChannel.name}".`,
+                  undefined,
+                  moveErr,
+                );
+                return null;
+              }
+
+              // Update in-memory managed room state
+              const record: ManagedRoomRecord = {
+                channelId: recycledChannel.id,
+                guildId: guild.id,
+                ownerId: member.id,
+                categoryName,
+                roomNumber: bestEmpty.roomNumber,
+                createdAt: new Date(),
+              };
+              this.managedRooms.set(recycledChannel.id, record);
+
+              this.log.debug(
+                `Successfully recycled and populated JTC room: "${recycledChannel.name}" (${recycledChannel.id})`,
+              );
+
+              return {
+                channel: recycledChannel,
+                roomNumber: bestEmpty.roomNumber,
+                categoryName,
+              };
+            } finally {
+              this.reservedChannelIds.delete(bestEmpty.id);
+              this.reservedChannelOwners.delete(bestEmpty.id);
+            }
           }
         }
       }
@@ -185,51 +296,58 @@ export class JtcService {
         throw createErr;
       }
 
-      // 6. Move the member to the created room
+      this.reservedChannelIds.add(newChannel.id);
+      this.reservedChannelOwners.set(newChannel.id, member.id);
       try {
-        await member.voice.setChannel(
-          newChannel,
-          "Cash Mod JTC move to created room",
-        );
-      } catch (moveErr: any) {
-        // Failure compensation: clean up newly created channel if member could not be moved
-        this.log.warn(
-          `Failed to move member "${member.user.tag}" to newly created room "${newChannel.name}". Compensating by deleting room.`,
-          undefined,
-          moveErr,
-        );
+        // 6. Move the member to the created room
         try {
-          await newChannel.delete("Cash Mod JTC move failure compensation");
-        } catch (cleanupErr: any) {
-          this.log.error(
-            `Compensation channel deletion failed: ${cleanupErr?.message}`,
-            undefined,
-            cleanupErr,
+          await member.voice.setChannel(
+            newChannel,
+            "Cash Mod JTC move to created room",
           );
+        } catch (moveErr: any) {
+          // Failure compensation: clean up newly created channel if member could not be moved
+          this.log.warn(
+            `Failed to move member "${member.user.tag}" to newly created room "${newChannel.name}". Compensating by deleting room.`,
+            undefined,
+            moveErr,
+          );
+          try {
+            await newChannel.delete("Cash Mod JTC move failure compensation");
+          } catch (cleanupErr: any) {
+            this.log.error(
+              `Compensation channel deletion failed: ${cleanupErr?.message}`,
+              undefined,
+              cleanupErr,
+            );
+          }
+          return null;
         }
-        return null;
+
+        // 7. Store runtime state
+        const record: ManagedRoomRecord = {
+          channelId: newChannel.id,
+          guildId: guild.id,
+          ownerId: member.id,
+          categoryName,
+          roomNumber: allocatedNumber,
+          createdAt: new Date(),
+        };
+        this.managedRooms.set(newChannel.id, record);
+
+        this.log.debug(
+          `Successfully created and populated JTC room: "${newChannel.name}" (${newChannel.id})`,
+        );
+
+        return {
+          channel: newChannel,
+          roomNumber: allocatedNumber,
+          categoryName,
+        };
+      } finally {
+        this.reservedChannelIds.delete(newChannel.id);
+        this.reservedChannelOwners.delete(newChannel.id);
       }
-
-      // 7. Store runtime state
-      const record: ManagedRoomRecord = {
-        channelId: newChannel.id,
-        guildId: guild.id,
-        ownerId: member.id,
-        categoryName,
-        roomNumber: allocatedNumber,
-        createdAt: new Date(),
-      };
-      this.managedRooms.set(newChannel.id, record);
-
-      this.log.debug(
-        `Successfully created and populated JTC room: "${newChannel.name}" (${newChannel.id})`,
-      );
-
-      return {
-        channel: newChannel,
-        roomNumber: allocatedNumber,
-        categoryName,
-      };
     } finally {
       releaseLock();
     }
@@ -282,7 +400,10 @@ export class JtcService {
    * Determines if a channel is an eligible temporary JTC room.
    */
   public isEligibleJtcChannel(channel: VoiceChannel): boolean {
-    if (this.managedRooms.has(channel.id)) {
+    if (
+      this.managedRooms.has(channel.id) ||
+      this.reservedChannelIds.has(channel.id)
+    ) {
       return true;
     }
 
@@ -298,4 +419,175 @@ export class JtcService {
 
     return false;
   }
+
+  /**
+   * Handles when a member directly joins a voice channel (e.g. clicking an existing room).
+   * Adopts empty rooms awaiting cleanup, or detects overcapacity/reservation conflicts and relocates excess members.
+   */
+  public async handleDirectJoin(
+    member: GuildMember,
+    channel: VoiceChannel,
+  ): Promise<void> {
+    if (!this.isEligibleJtcChannel(channel)) {
+      return;
+    }
+
+    // Ignore if member already left or moved away
+    if (member.voice?.channelId && member.voice.channelId !== channel.id) {
+      return;
+    }
+
+    let categoryName: JtcCategoryName | undefined =
+      this.managedRooms.get(channel.id)?.categoryName;
+    let roomNumber: number | undefined =
+      this.managedRooms.get(channel.id)?.roomNumber;
+
+    const match = this.config.jtc.namingRegex.exec(channel.name);
+    if (match) {
+      const matchedCatName = match[1];
+      const catDef = Object.values(this.config.jtc.categories).find(
+        (c) => c.name.toLowerCase() === matchedCatName.toLowerCase(),
+      );
+      if (catDef) {
+        categoryName = catDef.name;
+      }
+      const parsedNum = parseInt(match[2], 10);
+      if (!isNaN(parsedNum)) {
+        roomNumber = parsedNum;
+      }
+    }
+
+    if (!categoryName) {
+      return;
+    }
+
+    const categoryDef = this.config.jtc.categories[categoryName];
+    if (!categoryDef) {
+      return;
+    }
+
+    const capacityLimit = categoryDef.userLimit;
+    const isMemberInCache =
+      typeof (channel.members as any)?.has === "function"
+        ? (channel.members as any).has(member.id)
+        : true;
+    const currentMembers = isMemberInCache
+      ? (channel.members?.size ?? 1)
+      : (channel.members?.size ?? 0) + 1;
+
+    const reservedFor = this.reservedChannelOwners.get(channel.id);
+    const isReservedForOther =
+      reservedFor !== undefined && reservedFor !== member.id;
+    const isOverCapacity = currentMembers > capacityLimit;
+
+    // Check if this member is the legitimate owner already
+    const existingRecord = this.managedRooms.get(channel.id);
+    const isExistingOwner = existingRecord?.ownerId === member.id;
+
+    // Over-capacity or reservation conflict: relocate excess member
+    if (isReservedForOther || (isOverCapacity && !isExistingOwner)) {
+      this.log.info(
+        `Overcapacity or reservation collision detected in room "${channel.name}" (${currentMembers}/${capacityLimit}) for member "${member.user.tag}" (${member.id}). Relocating member to separate ${categoryName} room.`,
+      );
+
+      const trigger = Object.values(this.config.jtc.triggers).find(
+        (t) => t.categoryName.toLowerCase() === categoryName!.toLowerCase(),
+      );
+
+      if (!trigger) {
+        this.log.error(
+          `Cannot relocate member "${member.user.tag}": No trigger found for category "${categoryName}".`,
+        );
+        return;
+      }
+
+      await this.handleVoiceJoin(member, trigger.triggerChannelId);
+      return;
+    }
+
+    // Room is within capacity
+    // If room only has 1 occupant (this member), adopt them as the room owner
+    if (currentMembers === 1) {
+      this.cleanupHandler.cancelPendingCleanup(channel.id);
+      this.queue.cancelByTag(`cleanup:${channel.id}`);
+
+      const record: ManagedRoomRecord = {
+        channelId: channel.id,
+        guildId: channel.guild.id,
+        ownerId: member.id,
+        categoryName,
+        roomNumber: roomNumber ?? 1,
+        createdAt: new Date(),
+      };
+      this.managedRooms.set(channel.id, record);
+
+      const permissionOverwrites =
+        this.permissionService.buildJtcRoomOverwrites({
+          guildId: channel.guild.id,
+          ownerId: member.id,
+        });
+
+      try {
+        if (
+          channel.permissionOverwrites &&
+          typeof (channel.permissionOverwrites as any).set === "function"
+        ) {
+          await (channel.permissionOverwrites as any).set(permissionOverwrites);
+        }
+      } catch (permErr: any) {
+        this.log.warn(
+          `Failed to update permissions on directly joined room "${channel.name}": ${permErr?.message}`,
+        );
+      }
+
+      this.log.info(
+        `Adopted directly joined room "${channel.name}" (#${roomNumber ?? 1}) for member "${member.user.tag}" (${member.id})`,
+      );
+    } else {
+      // Room already has occupants within capacity (e.g. 2nd person in a Duo room)
+      this.cleanupHandler.cancelPendingCleanup(channel.id);
+      this.queue.cancelByTag(`cleanup:${channel.id}`);
+    }
+  }
+
+  /**
+   * Enqueues a member join event with HIGH priority in the operation queue.
+   */
+  public async queueVoiceJoin(
+    member: GuildMember,
+    joinedChannelId: string,
+  ): Promise<RoomAllocationResult | null> {
+    return this.queue.enqueue(
+      () => this.handleVoiceJoin(member, joinedChannelId),
+      TaskPriority.HIGH,
+    );
+  }
+
+  /**
+   * Enqueues a member direct join event with HIGH priority in the operation queue.
+   */
+  public async queueDirectJoin(
+    member: GuildMember,
+    channel: VoiceChannel,
+  ): Promise<void> {
+    return this.queue.enqueue(
+      () => this.handleDirectJoin(member, channel),
+      TaskPriority.HIGH,
+    );
+  }
+
+  /**
+   * Enqueues a member leave event with LOW priority in the operation queue.
+   */
+  public async queueVoiceLeave(
+    channel: VoiceChannel,
+  ): Promise<boolean> {
+    return this.queue.enqueue(
+      () => this.handleVoiceLeave(channel),
+      TaskPriority.LOW,
+      `cleanup:${channel.id}`,
+    );
+  }
 }
+
+
