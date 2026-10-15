@@ -9,12 +9,14 @@ export const JTC_CATEGORY_ORDER: readonly JtcCategoryName[] = [
 
 export interface JtcCategoryDefinition {
   name: JtcCategoryName;
+  categoryId: string;
   userLimit: number;
 }
 
 export interface JtcTriggerConfig {
   triggerChannelId: string;
   categoryName: JtcCategoryName;
+  categoryId?: string;
   roomNameTemplate: string; // e.g. "Solo #{number}"
   userLimit: number;
   bitrate?: number;
@@ -49,7 +51,7 @@ export interface JtcQueueConfig {
 }
 
 export interface JtcConfig {
-  anchorCategoryId: string;
+  anchorCategoryId?: string;
   categoryOrder: readonly JtcCategoryName[];
   categories: Record<JtcCategoryName, JtcCategoryDefinition>;
   triggers: Record<string, JtcTriggerConfig>;
@@ -68,37 +70,51 @@ export const buildJtcConfig = (
   const trioTrigger = env.JTC_TRIGGER_TRIO_ID ?? "100000000000000003";
   const quadTrigger = env.JTC_TRIGGER_QUAD_ID ?? "100000000000000004";
 
+  const defaultPublicCatId =
+    env.JTC_CATEGORY_ID ??
+    env.JTC_ANCHOR_CATEGORY_ID ??
+    "123456789012345679";
+
+  const soloCategoryId = env.JTC_CATEGORY_SOLO_ID ?? defaultPublicCatId;
+  const duoCategoryId = env.JTC_CATEGORY_DUO_ID ?? defaultPublicCatId;
+  const trioCategoryId = env.JTC_CATEGORY_TRIO_ID ?? defaultPublicCatId;
+  const quadCategoryId = env.JTC_CATEGORY_QUAD_ID ?? defaultPublicCatId;
+
   return {
-    anchorCategoryId: env.JTC_ANCHOR_CATEGORY_ID ?? "123456789012345679",
+    anchorCategoryId: defaultPublicCatId,
     categoryOrder: JTC_CATEGORY_ORDER,
     categories: {
-      Solo: { name: "Solo", userLimit: 1 },
-      Duo: { name: "Duo", userLimit: 2 },
-      Trio: { name: "Trio", userLimit: 3 },
-      Quad: { name: "Quad", userLimit: 4 },
+      Solo: { name: "Solo", categoryId: soloCategoryId, userLimit: 1 },
+      Duo: { name: "Duo", categoryId: duoCategoryId, userLimit: 2 },
+      Trio: { name: "Trio", categoryId: trioCategoryId, userLimit: 3 },
+      Quad: { name: "Quad", categoryId: quadCategoryId, userLimit: 4 },
     },
     triggers: {
       [soloTrigger]: {
         triggerChannelId: soloTrigger,
         categoryName: "Solo",
+        categoryId: soloCategoryId,
         roomNameTemplate: "Solo #{number}",
         userLimit: 1,
       },
       [duoTrigger]: {
         triggerChannelId: duoTrigger,
         categoryName: "Duo",
+        categoryId: duoCategoryId,
         roomNameTemplate: "Duo #{number}",
         userLimit: 2,
       },
       [trioTrigger]: {
         triggerChannelId: trioTrigger,
         categoryName: "Trio",
+        categoryId: trioCategoryId,
         roomNameTemplate: "Trio #{number}",
         userLimit: 3,
       },
       [quadTrigger]: {
         triggerChannelId: quadTrigger,
         categoryName: "Quad",
+        categoryId: quadCategoryId,
         roomNameTemplate: "Quad #{number}",
         userLimit: 4,
       },

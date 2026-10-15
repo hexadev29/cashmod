@@ -29,10 +29,10 @@ const createValidConfig = (): AppConfig => ({
     anchorCategoryId: "123456789012345679",
     categoryOrder: JTC_CATEGORY_ORDER,
     categories: {
-      Solo: { name: "Solo", userLimit: 1 },
-      Duo: { name: "Duo", userLimit: 2 },
-      Trio: { name: "Trio", userLimit: 3 },
-      Quad: { name: "Quad", userLimit: 4 },
+      Solo: { name: "Solo", categoryId: "123456789012345679", userLimit: 1 },
+      Duo: { name: "Duo", categoryId: "123456789012345679", userLimit: 2 },
+      Trio: { name: "Trio", categoryId: "123456789012345679", userLimit: 3 },
+      Quad: { name: "Quad", categoryId: "123456789012345679", userLimit: 4 },
     },
     triggers: {
       "100000000000000001": {

@@ -27,6 +27,8 @@ describe("loadConfig", () => {
 
     expect(config.discord.guildId).toBe("1466470318628536446");
     expect(config.jtc.anchorCategoryId).toBe("1481621773266059355");
+    expect(config.jtc.categories.Solo.categoryId).toBe("1481621773266059355");
+    expect(config.privateJtc.categoryId).toBe("148162180000000099");
     expect(config.privateJtc.anchorCategoryId).toBe("148162180000000099");
     expect(config.privateJtc.triggerChannelId).toBe("148162180000000100");
     expect(config.jtc.triggers["148162180000000001"]).toBeDefined();

@@ -35,10 +35,10 @@ const createMockConfig = (): AppConfig => ({
     anchorCategoryId: anchorId,
     categoryOrder: JTC_CATEGORY_ORDER,
     categories: {
-      Solo: { name: "Solo", userLimit: 1 },
-      Duo: { name: "Duo", userLimit: 2 },
-      Trio: { name: "Trio", userLimit: 3 },
-      Quad: { name: "Quad", userLimit: 4 },
+      Solo: { name: "Solo", categoryId: anchorId, userLimit: 1 },
+      Duo: { name: "Duo", categoryId: anchorId, userLimit: 2 },
+      Trio: { name: "Trio", categoryId: anchorId, userLimit: 3 },
+      Quad: { name: "Quad", categoryId: anchorId, userLimit: 4 },
     },
     triggers: {
       "100000000000000001": {
@@ -208,14 +208,9 @@ describe("JtcService", () => {
       expect.any(String),
     );
 
-    // Solo category was created dynamically on demand
+    // Solo category is resolved from predefined config
     expect(categoryManager.hasCategory("Solo")).toBe(true);
-    // Only 1 dynamic category was created, NOT all 8!
-    const dynamicCats = Array.from(createdChannels.values()).filter(
-      (ch) => ch.type === ChannelType.GuildCategory && ch.id !== anchorId,
-    );
-    expect(dynamicCats).toHaveLength(1);
-    expect(dynamicCats[0].name).toBe("Solo");
+    expect(result?.channel.parentId).toBe(anchorId);
   });
 
   it("compensates and deletes channel if moving member fails", async () => {
@@ -251,7 +246,7 @@ describe("JtcService", () => {
     expect(resA!.channel.name).not.toBe(resB!.channel.name);
   });
 
-  it("cleans up empty managed room on voice leave and deletes category if no rooms remain", async () => {
+  it("cleans up empty managed room on voice leave without deleting predefined category", async () => {
     const guild = createMockGuild();
     const member = createMockMember("m3", guild);
 
@@ -269,12 +264,11 @@ describe("JtcService", () => {
     expect(channel.delete).toHaveBeenCalled();
     expect(service.isManagedRoom(channel.id)).toBe(false);
 
-    // Dynamic category must also be deleted since 0 rooms remain in it
-    expect(categoryManager.hasCategory("Solo")).toBe(false);
-    expect(createdChannels.has(soloCatId)).toBe(false);
+    // Predefined category is permanent and must NOT be deleted
+    expect(categoryManager.hasCategory("Solo")).toBe(true);
   });
 
-  it("retains category while other rooms remain, and deletes category when last room leaves", async () => {
+  it("retains predefined category when rooms leave", async () => {
     const guild = createMockGuild();
     const memberA = createMockMember("mA", guild);
     const memberB = createMockMember("mB", guild);
@@ -292,20 +286,18 @@ describe("JtcService", () => {
     channelA.members.size = 0;
     await service.handleVoiceLeave(channelA as VoiceChannel);
 
-    // Solo #1 is gone, but Solo #2 still remains!
+    // Solo #1 is gone, but Solo #2 still remains
     expect(createdChannels.has(channelA.id)).toBe(false);
     expect(categoryManager.hasCategory("Solo")).toBe(true);
-    expect(createdChannels.has(soloCatId)).toBe(true);
 
     // Member B leaves room B
     const channelB = allocB!.channel as any;
     channelB.members.size = 0;
     await service.handleVoiceLeave(channelB as VoiceChannel);
 
-    // Now all rooms are gone -> category is also deleted!
+    // Now all rooms are gone, but predefined category remains permanent!
     expect(createdChannels.has(channelB.id)).toBe(false);
-    expect(categoryManager.hasCategory("Solo")).toBe(false);
-    expect(createdChannels.has(soloCatId)).toBe(false);
+    expect(categoryManager.hasCategory("Solo")).toBe(true);
   });
 
   it("recycles existing empty rooms in ascending order (Solo #3, #6, #7 -> allocates #3 first)", async () => {

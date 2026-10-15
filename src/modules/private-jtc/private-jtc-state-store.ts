@@ -63,9 +63,13 @@ export class PrivateJtcStateStore {
         return null;
       }
 
-      if (parsed.anchorCategoryId !== expectedAnchorId) {
+      if (
+        expectedAnchorId &&
+        parsed.anchorCategoryId !== expectedAnchorId &&
+        parsed.categoryId !== expectedAnchorId
+      ) {
         this.log.warn(
-          `State file anchor mismatch: found "${parsed.anchorCategoryId}", expected "${expectedAnchorId}". Discarding stale state.`,
+          `State file category/anchor mismatch: found "${parsed.anchorCategoryId ?? parsed.categoryId}", expected "${expectedAnchorId}". Discarding stale state.`,
         );
         return null;
       }

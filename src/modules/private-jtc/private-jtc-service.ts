@@ -135,10 +135,11 @@ export class PrivateJtcService {
     if (this.userProfiles.size > 0) {
       return;
     }
-    const loaded = await this.stateStore.loadState(
-      guildId,
-      this.config.privateJtc.anchorCategoryId,
-    );
+    const catId =
+      this.config.privateJtc.categoryId ||
+      this.config.privateJtc.anchorCategoryId ||
+      "";
+    const loaded = await this.stateStore.loadState(guildId, catId);
     if (loaded?.userProfiles) {
       for (const [uid, prof] of Object.entries(loaded.userProfiles)) {
         this.userProfiles.set(uid, prof);
@@ -203,9 +204,14 @@ export class PrivateJtcService {
       userProfiles[uid] = prof;
     }
 
+    const catId =
+      this.config.privateJtc.categoryId ||
+      this.config.privateJtc.anchorCategoryId ||
+      "";
+
     await this.stateStore.saveState(
       guildId,
-      this.config.privateJtc.anchorCategoryId,
+      catId,
       {
         categoryId: this.categoryManager.getCategoryId() ?? undefined,
         rooms,
@@ -228,10 +234,11 @@ export class PrivateJtcService {
       await this.categoryManager.initFromState(guild);
       await this.categoryManager.realignCategory(guild);
 
-      const loadedState = await this.stateStore.loadState(
-        guild.id,
-        this.config.privateJtc.anchorCategoryId,
-      );
+      const catId =
+        this.config.privateJtc.categoryId ||
+        this.config.privateJtc.anchorCategoryId ||
+        "";
+      const loadedState = await this.stateStore.loadState(guild.id, catId);
 
       if (loadedState?.userProfiles) {
         for (const [userId, profile] of Object.entries(

@@ -118,14 +118,14 @@ export const validateConfig = (config: AppConfig): void => {
     }
   }
 
-  // 4. JTC Anchor Category Validation
+  // 4. JTC Anchor Category Validation (Optional fallback)
   if (
-    !config.jtc.anchorCategoryId ||
+    config.jtc.anchorCategoryId &&
     !isSnowflake(config.jtc.anchorCategoryId)
   ) {
     errors.push({
       field: "jtc.anchorCategoryId",
-      message: `anchorCategoryId must be a valid 17-20 digit Discord snowflake string, received: "${config.jtc.anchorCategoryId}".`,
+      message: `anchorCategoryId must be a valid 17-20 digit Discord snowflake string if provided, received: "${config.jtc.anchorCategoryId}".`,
     });
   }
 
@@ -137,7 +137,7 @@ export const validateConfig = (config: AppConfig): void => {
   ) {
     errors.push({
       field: "jtc.categoryOrder",
-      message: `categoryOrder must contain exactly 8 categories: ${expectedOrder.join(" → ")}.`,
+      message: `categoryOrder must contain exactly ${expectedOrder.length} categories: ${expectedOrder.join(" → ")}.`,
     });
   } else {
     for (let i = 0; i < expectedOrder.length; i++) {
@@ -160,6 +160,13 @@ export const validateConfig = (config: AppConfig): void => {
         message: `Missing category definition for "${catName}".`,
       });
       continue;
+    }
+
+    if (!cat.categoryId || !isSnowflake(cat.categoryId)) {
+      errors.push({
+        field: `jtc.categories.${catName}.categoryId`,
+        message: `categoryId for "${catName}" must be a valid 17-20 digit Discord snowflake string, received: "${cat.categoryId}".`,
+      });
     }
 
     if (typeof cat.userLimit !== "number" || cat.userLimit < 1) {
@@ -257,13 +264,12 @@ export const validateConfig = (config: AppConfig): void => {
 
   // 10. Private JTC Validation
   if (config.privateJtc) {
-    if (
-      !config.privateJtc.anchorCategoryId ||
-      !isSnowflake(config.privateJtc.anchorCategoryId)
-    ) {
+    const privateCatId =
+      config.privateJtc.categoryId || config.privateJtc.anchorCategoryId;
+    if (!privateCatId || !isSnowflake(privateCatId)) {
       errors.push({
-        field: "privateJtc.anchorCategoryId",
-        message: `privateJtc.anchorCategoryId must be a valid Discord snowflake, received: "${config.privateJtc.anchorCategoryId}".`,
+        field: "privateJtc.categoryId",
+        message: `privateJtc.categoryId must be a valid Discord snowflake, received: "${privateCatId}".`,
       });
     }
     if (

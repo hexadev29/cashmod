@@ -35,7 +35,8 @@ export const defaultPrivateJtcEmojis: PrivateJtcEmojisConfig = {
 import type { JtcCleanupConfig, JtcQueueConfig } from "../jtc/jtc.config.js";
 
 export interface PrivateJtcConfig {
-  anchorCategoryId: string;
+  categoryId: string;
+  anchorCategoryId?: string;
   triggerChannelId: string;
   categoryName: string;
   roomNameTemplate: string;
@@ -51,9 +52,14 @@ export interface PrivateJtcConfig {
 export const buildPrivateJtcConfig = (
   env: NodeJS.ProcessEnv = process.env,
 ): PrivateJtcConfig => {
+  const privateCategoryId =
+    env.JTC_PRIVATE_CATEGORY_ID ??
+    env.JTC_PRIVATE_ANCHOR_CATEGORY_ID ??
+    "223456789012345679";
+
   return {
-    anchorCategoryId:
-      env.JTC_PRIVATE_ANCHOR_CATEGORY_ID ?? "223456789012345679",
+    categoryId: privateCategoryId,
+    anchorCategoryId: privateCategoryId,
     triggerChannelId: env.JTC_PRIVATE_TRIGGER_ID ?? "200000000000000001",
     categoryName: env.JTC_PRIVATE_CATEGORY_NAME ?? "Private Rooms",
     roomNameTemplate: env.JTC_PRIVATE_ROOM_NAME_TEMPLATE ?? "{username}'s Room",
