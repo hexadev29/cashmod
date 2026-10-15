@@ -152,7 +152,7 @@ The loader must work with the repository's actual development and compiled produ
 
 ### Category order
 
-`Solo → Duo → Trio → Quad → Penta → Hexa → Septa → Octa`
+`Solo → Duo → Trio → Quad → Penta → HEPTA → Septa → Octa`
 
 Keep this order in JTC configuration, not scattered conditionals.
 

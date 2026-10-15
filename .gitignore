@@ -11,6 +11,9 @@ dist/
 *.pem
 *.key
 
+# Runtime State
+data/state/
+
 # Logs and Diagnostics
 *.log
 npm-debug.log*

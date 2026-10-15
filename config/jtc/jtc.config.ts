@@ -1,5 +1,5 @@
 export type JtcCategoryName =
-  "Solo" | "Duo" | "Trio" | "Quad" | "Penta" | "Hexa" | "Septa" | "Octa";
+  "Solo" | "Duo" | "Trio" | "Quad" | "Penta" | "Hepta" | "Septa" | "Octa";
 
 export const JTC_CATEGORY_ORDER: readonly JtcCategoryName[] = [
   "Solo",
@@ -7,14 +7,13 @@ export const JTC_CATEGORY_ORDER: readonly JtcCategoryName[] = [
   "Trio",
   "Quad",
   "Penta",
-  "Hexa",
+  "Hepta",
   "Septa",
   "Octa",
 ] as const;
 
-export interface JtcCategoryConfig {
+export interface JtcCategoryDefinition {
   name: JtcCategoryName;
-  categoryId: string;
   userLimit: number;
 }
 
@@ -27,7 +26,6 @@ export interface JtcTriggerConfig {
 }
 
 export interface JtcPositioningConfig {
-  anchorCategoryId?: string;
   sortDescending?: boolean;
 }
 
@@ -44,8 +42,9 @@ export interface JtcPermissionsMapping {
 }
 
 export interface JtcConfig {
+  anchorCategoryId: string;
   categoryOrder: readonly JtcCategoryName[];
-  categories: Record<JtcCategoryName, JtcCategoryConfig>;
+  categories: Record<JtcCategoryName, JtcCategoryDefinition>;
   triggers: Record<string, JtcTriggerConfig>;
   namingRegex: RegExp;
   positioning: JtcPositioningConfig;
@@ -54,51 +53,19 @@ export interface JtcConfig {
 }
 
 export const jtcConfig: JtcConfig = {
+  anchorCategoryId: process.env.JTC_ANCHOR_CATEGORY_ID ?? "123456789012345679",
   categoryOrder: JTC_CATEGORY_ORDER,
   categories: {
-    Solo: {
-      name: "Solo",
-      categoryId: process.env.JTC_CATEGORY_SOLO_ID ?? "111111111111111111",
-      userLimit: 1,
-    },
-    Duo: {
-      name: "Duo",
-      categoryId: process.env.JTC_CATEGORY_DUO_ID ?? "222222222222222222",
-      userLimit: 2,
-    },
-    Trio: {
-      name: "Trio",
-      categoryId: process.env.JTC_CATEGORY_TRIO_ID ?? "333333333333333333",
-      userLimit: 3,
-    },
-    Quad: {
-      name: "Quad",
-      categoryId: process.env.JTC_CATEGORY_QUAD_ID ?? "444444444444444444",
-      userLimit: 4,
-    },
-    Penta: {
-      name: "Penta",
-      categoryId: process.env.JTC_CATEGORY_PENTA_ID ?? "555555555555555555",
-      userLimit: 5,
-    },
-    Hexa: {
-      name: "Hexa",
-      categoryId: process.env.JTC_CATEGORY_HEXA_ID ?? "666666666666666666",
-      userLimit: 6,
-    },
-    Septa: {
-      name: "Septa",
-      categoryId: process.env.JTC_CATEGORY_SEPTA_ID ?? "777777777777777777",
-      userLimit: 7,
-    },
-    Octa: {
-      name: "Octa",
-      categoryId: process.env.JTC_CATEGORY_OCTA_ID ?? "888888888888888888",
-      userLimit: 8,
-    },
+    Solo: { name: "Solo", userLimit: 1 },
+    Duo: { name: "Duo", userLimit: 2 },
+    Trio: { name: "Trio", userLimit: 3 },
+    Quad: { name: "Quad", userLimit: 4 },
+    Penta: { name: "Penta", userLimit: 5 },
+    Hepta: { name: "Hepta", userLimit: 6 },
+    Septa: { name: "Septa", userLimit: 7 },
+    Octa: { name: "Octa", userLimit: 8 },
   },
   triggers: {
-    // Configured triggers keyed by trigger voice channel ID
     [process.env.JTC_TRIGGER_SOLO_ID ?? "100000000000000001"]: {
       triggerChannelId: process.env.JTC_TRIGGER_SOLO_ID ?? "100000000000000001",
       categoryName: "Solo",
@@ -130,10 +97,11 @@ export const jtcConfig: JtcConfig = {
       roomNameTemplate: "Penta #{number}",
       userLimit: 5,
     },
-    [process.env.JTC_TRIGGER_HEXA_ID ?? "100000000000000006"]: {
-      triggerChannelId: process.env.JTC_TRIGGER_HEXA_ID ?? "100000000000000006",
-      categoryName: "Hexa",
-      roomNameTemplate: "Hexa #{number}",
+    [process.env.JTC_TRIGGER_HEPTA_ID ?? "100000000000000006"]: {
+      triggerChannelId:
+        process.env.JTC_TRIGGER_HEPTA_ID ?? "100000000000000006",
+      categoryName: "Hepta",
+      roomNameTemplate: "Hepta #{number}",
       userLimit: 6,
     },
     [process.env.JTC_TRIGGER_SEPTA_ID ?? "100000000000000007"]: {
@@ -150,7 +118,7 @@ export const jtcConfig: JtcConfig = {
       userLimit: 8,
     },
   },
-  namingRegex: /^(Solo|Duo|Trio|Quad|Penta|Hexa|Septa|Octa)\s+#(\d+)$/i,
+  namingRegex: /^(Solo|Duo|Trio|Quad|Penta|Hepta|Septa|Octa)\s+#(\d+)$/i,
   positioning: {
     sortDescending: false,
   },

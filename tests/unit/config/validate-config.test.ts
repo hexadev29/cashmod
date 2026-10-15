@@ -22,16 +22,17 @@ const createValidConfig = (): AppConfig => ({
     },
   },
   jtc: {
+    anchorCategoryId: "123456789012345679",
     categoryOrder: JTC_CATEGORY_ORDER,
     categories: {
-      Solo: { name: "Solo", categoryId: "111111111111111111", userLimit: 1 },
-      Duo: { name: "Duo", categoryId: "222222222222222222", userLimit: 2 },
-      Trio: { name: "Trio", categoryId: "333333333333333333", userLimit: 3 },
-      Quad: { name: "Quad", categoryId: "444444444444444444", userLimit: 4 },
-      Penta: { name: "Penta", categoryId: "555555555555555555", userLimit: 5 },
-      Hexa: { name: "Hexa", categoryId: "666666666666666666", userLimit: 6 },
-      Septa: { name: "Septa", categoryId: "777777777777777777", userLimit: 7 },
-      Octa: { name: "Octa", categoryId: "888888888888888888", userLimit: 8 },
+      Solo: { name: "Solo", userLimit: 1 },
+      Duo: { name: "Duo", userLimit: 2 },
+      Trio: { name: "Trio", userLimit: 3 },
+      Quad: { name: "Quad", userLimit: 4 },
+      Penta: { name: "Penta", userLimit: 5 },
+      Hepta: { name: "Hepta", userLimit: 6 },
+      Septa: { name: "Septa", userLimit: 7 },
+      Octa: { name: "Octa", userLimit: 8 },
     },
     triggers: {
       "100000000000000001": {
@@ -41,7 +42,7 @@ const createValidConfig = (): AppConfig => ({
         userLimit: 1,
       },
     },
-    namingRegex: /^(Solo|Duo|Trio|Quad|Penta|Hexa|Septa|Octa)\s+#(\d+)$/i,
+    namingRegex: /^(Solo|Duo|Trio|Quad|Penta|HEPTA|Septa|Octa)\s+#(\d+)$/i,
     positioning: {},
     cleanup: {
       delayMs: 10,
@@ -82,16 +83,22 @@ describe("validateConfig", () => {
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
   });
 
+  it("fails when anchorCategoryId is missing or not a valid snowflake", () => {
+    const config = createValidConfig();
+    config.jtc.anchorCategoryId = "bad-anchor";
+    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
+    try {
+      validateConfig(config);
+    } catch (err: any) {
+      expect(
+        err.errors.some((e: any) => e.field === "jtc.anchorCategoryId"),
+      ).toBe(true);
+    }
+  });
+
   it("fails when category order is modified or missing categories", () => {
     const config = createValidConfig();
     config.jtc.categoryOrder = ["Duo", "Solo"] as any;
-    expect(() => validateConfig(config)).toThrow(ConfigValidationError);
-  });
-
-  it("fails when duplicate category IDs are present", () => {
-    const config = createValidConfig();
-    config.jtc.categories.Duo.categoryId =
-      config.jtc.categories.Solo.categoryId;
     expect(() => validateConfig(config)).toThrow(ConfigValidationError);
   });
 

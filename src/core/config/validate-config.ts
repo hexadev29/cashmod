@@ -3,7 +3,7 @@ import {
   JTC_CATEGORY_ORDER,
   type JtcCategoryName,
   type JtcTriggerConfig,
-  type JtcCategoryConfig,
+  type JtcCategoryDefinition,
 } from "../../../config/jtc/jtc.config.js";
 
 export interface ValidationError {
@@ -69,7 +69,18 @@ export const validateConfig = (config: AppConfig): void => {
     });
   }
 
-  // 4. JTC Category Order Validation
+  // 4. JTC Anchor Category Validation
+  if (
+    !config.jtc.anchorCategoryId ||
+    !isSnowflake(config.jtc.anchorCategoryId)
+  ) {
+    errors.push({
+      field: "jtc.anchorCategoryId",
+      message: `anchorCategoryId must be a valid 17-20 digit Discord snowflake string, received: "${config.jtc.anchorCategoryId}".`,
+    });
+  }
+
+  // 5. JTC Category Order Validation
   const expectedOrder: readonly JtcCategoryName[] = JTC_CATEGORY_ORDER;
   if (
     !config.jtc.categoryOrder ||
@@ -90,30 +101,16 @@ export const validateConfig = (config: AppConfig): void => {
     }
   }
 
-  // 5. JTC Categories Validation
-  const seenCategoryIds = new Set<string>();
+  // 6. JTC Category Definitions Validation
   for (const catName of expectedOrder) {
-    const cat: JtcCategoryConfig | undefined = config.jtc.categories[catName];
+    const cat: JtcCategoryDefinition | undefined =
+      config.jtc.categories[catName];
     if (!cat) {
       errors.push({
         field: `jtc.categories.${catName}`,
-        message: `Missing category configuration for "${catName}".`,
+        message: `Missing category definition for "${catName}".`,
       });
       continue;
-    }
-
-    if (!isSnowflake(cat.categoryId)) {
-      errors.push({
-        field: `jtc.categories.${catName}.categoryId`,
-        message: `Category ID for "${catName}" must be a valid Discord snowflake, received: "${cat.categoryId}".`,
-      });
-    } else if (seenCategoryIds.has(cat.categoryId)) {
-      errors.push({
-        field: `jtc.categories.${catName}.categoryId`,
-        message: `Duplicate category ID detected: "${cat.categoryId}". Each category must have a unique ID.`,
-      });
-    } else {
-      seenCategoryIds.add(cat.categoryId);
     }
 
     if (typeof cat.userLimit !== "number" || cat.userLimit < 1) {
@@ -124,7 +121,7 @@ export const validateConfig = (config: AppConfig): void => {
     }
   }
 
-  // 6. JTC Triggers Validation
+  // 7. JTC Triggers Validation
   const triggerEntries = Object.entries(config.jtc.triggers) as [
     string,
     JtcTriggerConfig,
@@ -167,7 +164,7 @@ export const validateConfig = (config: AppConfig): void => {
     }
   }
 
-  // 7. Cleanup Validation
+  // 8. Cleanup Validation
   if (
     typeof config.jtc.cleanup.delayMs !== "number" ||
     config.jtc.cleanup.delayMs < 0

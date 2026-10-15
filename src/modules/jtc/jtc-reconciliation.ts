@@ -4,6 +4,7 @@ import type {
   JtcCategoryName,
 } from "../../../config/jtc/jtc.config.js";
 import type { RoomCleanupHandler } from "./room-cleanup.js";
+import type { CategoryManager } from "./category-manager.js";
 import { logger } from "../../diagnostics/logger.js";
 
 export interface ReconciliationResult {
@@ -15,6 +16,7 @@ export interface ReconciliationResult {
 export const reconcileJtcRooms = async (
   guild: Guild,
   config: JtcConfig,
+  categoryManager: CategoryManager,
   cleanupHandler: RoomCleanupHandler,
   registerAdoptedRoom: (
     channelId: string,
@@ -31,12 +33,6 @@ export const reconcileJtcRooms = async (
   let activeAdopted = 0;
   let emptyCleaned = 0;
 
-  // Build map of category ID -> JtcCategoryName
-  const categoryIdToName = new Map<string, JtcCategoryName>();
-  for (const cat of Object.values(config.categories)) {
-    categoryIdToName.set(cat.categoryId, cat.name);
-  }
-
   try {
     const channels = await guild.channels.fetch();
 
@@ -44,9 +40,10 @@ export const reconcileJtcRooms = async (
       if (!channel || !channel.isVoiceBased() || channel.isDMBased()) continue;
 
       const parentId = channel.parentId;
-      if (!parentId || !categoryIdToName.has(parentId)) continue;
+      if (!parentId) continue;
 
-      const categoryName = categoryIdToName.get(parentId)!;
+      const categoryName = categoryManager.getCategoryNameById(parentId);
+      if (!categoryName) continue;
 
       // Check if channel name matches naming regex
       const match = config.namingRegex.exec(channel.name);

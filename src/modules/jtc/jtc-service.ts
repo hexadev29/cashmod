@@ -20,26 +20,32 @@ import {
   reconcileJtcRooms,
   type ReconciliationResult,
 } from "./jtc-reconciliation.js";
+import { CategoryManager } from "./category-manager.js";
 import type { ManagedRoomRecord, RoomAllocationResult } from "./jtc-types.js";
 import { logger } from "../../diagnostics/logger.js";
-import type {
-  JtcCategoryName,
-  JtcCategoryConfig,
-} from "../../../config/jtc/jtc.config.js";
+import type { JtcCategoryName } from "../../../config/jtc/jtc.config.js";
 
 export class JtcService {
   private readonly managedRooms = new Map<string, ManagedRoomRecord>();
   private readonly asyncLock = new AsyncLock();
   private readonly cleanupHandler: RoomCleanupHandler;
+  private readonly categoryManager: CategoryManager;
   private readonly log = logger.child({ subsystem: "JtcService" });
 
   constructor(
     private readonly config: AppConfig,
     private readonly permissionService: PermissionService,
     cleanupHandler?: RoomCleanupHandler,
+    categoryManager?: CategoryManager,
   ) {
     this.cleanupHandler =
       cleanupHandler ?? new RoomCleanupHandler(this.config.jtc.cleanup);
+    this.categoryManager =
+      categoryManager ?? new CategoryManager(this.config.jtc);
+  }
+
+  public getCategoryManager(): CategoryManager {
+    return this.categoryManager;
   }
 
   public isManagedRoom(channelId: string): boolean {
@@ -63,7 +69,7 @@ export class JtcService {
 
   /**
    * Handles when a member joins a voice channel.
-   * If it is a configured trigger channel, creates a new JTC room and moves the member.
+   * If it is a configured trigger channel, creates a new JTC room in the dynamically managed category.
    */
   public async handleVoiceJoin(
     member: GuildMember,
@@ -75,18 +81,38 @@ export class JtcService {
     }
 
     const { categoryName, roomNameTemplate, userLimit, bitrate } = trigger;
-    const categoryConfig = this.config.jtc.categories[categoryName];
+    const categoryDef = this.config.jtc.categories[categoryName];
 
-    if (!categoryConfig) {
+    if (!categoryDef) {
       this.log.error(
-        `Trigger channel ${joinedChannelId} points to unconfigured category: "${categoryName}".`,
+        `Trigger channel ${joinedChannelId} points to unconfigured category definition: "${categoryName}".`,
+      );
+      return null;
+    }
+
+    // Ensure all 8 categories are dynamically initialized in Discord and persisted
+    try {
+      await this.categoryManager.ensureInitialized(member.guild);
+    } catch (initErr: any) {
+      this.log.error(
+        `Aborting JTC room creation: CategoryManager failed to initialize categories: ${initErr?.message}`,
+        undefined,
+        initErr,
+      );
+      return null;
+    }
+
+    const targetCategoryId = this.categoryManager.getCategoryId(categoryName);
+    if (!targetCategoryId) {
+      this.log.error(
+        `Category "${categoryName}" ID could not be resolved from CategoryManager.`,
       );
       return null;
     }
 
     // Acquire lock per category to prevent concurrent race conditions on number allocation
     const releaseLock = await this.asyncLock.acquire(
-      `category:${categoryConfig.categoryId}`,
+      `category:${targetCategoryId}`,
     );
 
     try {
@@ -98,11 +124,7 @@ export class JtcService {
       const siblingNames: string[] = [];
 
       for (const [, ch] of allChannels) {
-        if (
-          !ch ||
-          !ch.isVoiceBased() ||
-          ch.parentId !== categoryConfig.categoryId
-        )
+        if (!ch || !ch.isVoiceBased() || ch.parentId !== targetCategoryId)
           continue;
 
         siblingNames.push(ch.name);
@@ -142,7 +164,7 @@ export class JtcService {
         });
 
       this.log.info(
-        `Creating JTC room "${roomName}" (#${allocatedNumber}) in category "${categoryName}" for member "${member.user.tag}" (${member.id})`,
+        `Creating JTC room "${roomName}" (#${allocatedNumber}) in dynamic category "${categoryName}" (${targetCategoryId}) for member "${member.user.tag}" (${member.id})`,
       );
 
       // 5. Create the channel in Discord
@@ -151,8 +173,8 @@ export class JtcService {
         newChannel = (await guild.channels.create({
           name: roomName,
           type: ChannelType.GuildVoice,
-          parent: categoryConfig.categoryId,
-          userLimit: userLimit ?? categoryConfig.userLimit,
+          parent: targetCategoryId,
+          userLimit: userLimit ?? categoryDef.userLimit,
           bitrate,
           position: targetPosition,
           permissionOverwrites,
@@ -237,12 +259,14 @@ export class JtcService {
   }
 
   /**
-   * Reconciles existing channels after bot startup.
+   * Reconciles dynamic categories and existing channels after bot startup.
    */
   public async reconcile(guild: Guild): Promise<ReconciliationResult> {
+    await this.categoryManager.ensureInitialized(guild);
     return reconcileJtcRooms(
       guild,
       this.config.jtc,
+      this.categoryManager,
       this.cleanupHandler,
       (chId, catName, num) => {
         this.registerAdoptedRoom(chId, catName, num);
@@ -258,14 +282,13 @@ export class JtcService {
       return true;
     }
 
-    // Check if channel belongs to one of the configured categories and matches the naming pattern
     if (!channel.parentId) return false;
 
-    const isJtcCategory = (
-      Object.values(this.config.jtc.categories) as JtcCategoryConfig[]
-    ).some((cat) => cat.categoryId === channel.parentId);
-
-    if (isJtcCategory && this.config.jtc.namingRegex.test(channel.name)) {
+    // Check if channel parent is one of the dynamically managed categories
+    if (
+      this.categoryManager.isManagedCategory(channel.parentId) &&
+      this.config.jtc.namingRegex.test(channel.name)
+    ) {
       return true;
     }
 

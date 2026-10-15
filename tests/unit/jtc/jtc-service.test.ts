@@ -1,9 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import {
+  ChannelType,
+  type Guild,
+  type GuildMember,
+  type VoiceChannel,
+} from "discord.js";
 import { JtcService } from "../../../src/modules/jtc/jtc-service.js";
 import { PermissionService } from "../../../src/core/permissions/permission-service.js";
+import { CategoryManager } from "../../../src/modules/jtc/category-manager.js";
+import { JtcStateStore } from "../../../src/modules/jtc/jtc-state-store.js";
 import type { AppConfig } from "../../../src/core/config/config-types.js";
 import { JTC_CATEGORY_ORDER } from "../../../config/jtc/jtc.config.js";
-import type { Guild, GuildMember, VoiceChannel } from "discord.js";
+
+const anchorId = "123456789012345679";
+const testStateDir = path.resolve(process.cwd(), "data/test-service-state");
+const testStateFile = path.join(testStateDir, "jtc-categories.json");
 
 const createMockConfig = (): AppConfig => ({
   env: { nodeEnv: "test", token: "mock-token" },
@@ -15,16 +28,17 @@ const createMockConfig = (): AppConfig => ({
     },
   },
   jtc: {
+    anchorCategoryId: anchorId,
     categoryOrder: JTC_CATEGORY_ORDER,
     categories: {
-      Solo: { name: "Solo", categoryId: "111111111111111111", userLimit: 1 },
-      Duo: { name: "Duo", categoryId: "222222222222222222", userLimit: 2 },
-      Trio: { name: "Trio", categoryId: "333333333333333333", userLimit: 3 },
-      Quad: { name: "Quad", categoryId: "444444444444444444", userLimit: 4 },
-      Penta: { name: "Penta", categoryId: "555555555555555555", userLimit: 5 },
-      Hexa: { name: "Hexa", categoryId: "666666666666666666", userLimit: 6 },
-      Septa: { name: "Septa", categoryId: "777777777777777777", userLimit: 7 },
-      Octa: { name: "Octa", categoryId: "888888888888888888", userLimit: 8 },
+      Solo: { name: "Solo", userLimit: 1 },
+      Duo: { name: "Duo", userLimit: 2 },
+      Trio: { name: "Trio", userLimit: 3 },
+      Quad: { name: "Quad", userLimit: 4 },
+      Penta: { name: "Penta", userLimit: 5 },
+      Hepta: { name: "Hepta", userLimit: 6 },
+      Septa: { name: "Septa", userLimit: 7 },
+      Octa: { name: "Octa", userLimit: 8 },
     },
     triggers: {
       "100000000000000001": {
@@ -34,7 +48,7 @@ const createMockConfig = (): AppConfig => ({
         userLimit: 1,
       },
     },
-    namingRegex: /^(Solo|Duo|Trio|Quad|Penta|Hexa|Septa|Octa)\s+#(\d+)$/i,
+    namingRegex: /^(Solo|Duo|Trio|Quad|Penta|Hepta|Septa|Octa)\s+#(\d+)$/i,
     positioning: {},
     cleanup: {
       delayMs: 0,
@@ -55,19 +69,48 @@ const createMockConfig = (): AppConfig => ({
 describe("JtcService", () => {
   let config: AppConfig;
   let permissionService: PermissionService;
+  let categoryManager: CategoryManager;
   let service: JtcService;
   let createdChannels: Map<string, any>;
   let channelCounter = 0;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    if (fs.existsSync(testStateDir)) {
+      await fs.promises.rm(testStateDir, { recursive: true, force: true });
+    }
+
     config = createMockConfig();
     permissionService = new PermissionService(
       config.permissions,
       config.jtc.permissions,
     );
-    service = new JtcService(config, permissionService);
+    const stateStore = new JtcStateStore(testStateFile);
+    categoryManager = new CategoryManager(config.jtc, stateStore);
+    service = new JtcService(
+      config,
+      permissionService,
+      undefined,
+      categoryManager,
+    );
+
     createdChannels = new Map();
     channelCounter = 0;
+
+    // Anchor Category channel in guild
+    createdChannels.set(anchorId, {
+      id: anchorId,
+      name: "━━ ANCHOR CATEGORY ━━",
+      type: ChannelType.GuildCategory,
+      position: 0,
+      isVoiceBased: () => false,
+      isDMBased: () => false,
+    });
+  });
+
+  afterEach(async () => {
+    if (fs.existsSync(testStateDir)) {
+      await fs.promises.rm(testStateDir, { recursive: true, force: true });
+    }
   });
 
   const createMockGuild = (): Guild => {
@@ -75,17 +118,24 @@ describe("JtcService", () => {
       id: config.discord.guildId,
       name: "Test Guild",
       channels: {
-        fetch: vi.fn().mockImplementation(async () => createdChannels),
+        fetch: vi.fn().mockImplementation(async (id?: string) => {
+          if (id) {
+            return createdChannels.get(id) ?? null;
+          }
+          return createdChannels;
+        }),
         create: vi.fn().mockImplementation(async (opts: any) => {
           channelCounter++;
           const chId = `created-ch-${channelCounter}`;
+          const isCategory = opts.type === ChannelType.GuildCategory;
           const newCh = {
             id: chId,
             name: opts.name,
+            type: opts.type,
             parentId: opts.parent,
             position: opts.position ?? 0,
             userLimit: opts.userLimit,
-            isVoiceBased: () => true,
+            isVoiceBased: () => !isCategory,
             isDMBased: () => false,
             members: { size: 1 },
             deletable: true,
@@ -123,7 +173,7 @@ describe("JtcService", () => {
     } as unknown as GuildMember;
   };
 
-  it("allocates room #1 on first join and moves member", async () => {
+  it("allocates room #1 on first join and moves member after initializing category", async () => {
     const guild = createMockGuild();
     const member = createMockMember("m1", guild);
 
@@ -137,6 +187,9 @@ describe("JtcService", () => {
       result?.channel,
       expect.any(String),
     );
+
+    // CategoryManager must now be initialized
+    expect(categoryManager.isInitialized()).toBe(true);
   });
 
   it("compensates and deletes channel if moving member fails", async () => {
@@ -146,8 +199,11 @@ describe("JtcService", () => {
     const result = await service.handleVoiceJoin(member, "100000000000000001");
 
     expect(result).toBeNull();
-    // Verify created channel was deleted during compensation
-    expect(createdChannels.size).toBe(0);
+    // Verify voice channel was deleted during compensation (only categories remain)
+    const voiceChannels = Array.from(createdChannels.values()).filter((ch) =>
+      ch.isVoiceBased(),
+    );
+    expect(voiceChannels).toHaveLength(0);
   });
 
   it("handles concurrent joins without allocating duplicate room numbers", async () => {
