@@ -23,12 +23,16 @@ describe("loadConfig", () => {
       JTC_TRIGGER_HEPTA_ID: "148162180000000006",
       JTC_TRIGGER_SEPTA_ID: "148162180000000007",
       JTC_TRIGGER_OCTA_ID: "148162180000000008",
+      JTC_PRIVATE_ANCHOR_CATEGORY_ID: "148162180000000099",
+      JTC_PRIVATE_TRIGGER_ID: "148162180000000100",
     };
 
     const config = loadConfig(customEnv);
 
     expect(config.discord.guildId).toBe("1466470318628536446");
     expect(config.jtc.anchorCategoryId).toBe("1481621773266059355");
+    expect(config.privateJtc.anchorCategoryId).toBe("148162180000000099");
+    expect(config.privateJtc.triggerChannelId).toBe("148162180000000100");
     expect(config.jtc.triggers["148162180000000001"]).toBeDefined();
     expect(config.jtc.triggers["148162180000000001"].triggerChannelId).toBe(
       "148162180000000001",
