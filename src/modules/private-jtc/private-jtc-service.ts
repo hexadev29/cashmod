@@ -13,7 +13,7 @@ import { PrivateCategoryManager } from "./private-category-manager.js";
 import { PrivateJtcStateStore } from "./private-jtc-state-store.js";
 import { buildPrivateInterfaceMessage } from "./private-interface-builder.js";
 import { PrivateJtcInteractionManager } from "./private-jtc-interaction-manager.js";
-import type { PrivateJtcRoomRecord } from "./private-jtc-types.js";
+import type { PrivateJtcRoomRecord, PrivateJtcUserProfile } from "./private-jtc-types.js";
 import { logger } from "../../diagnostics/logger.js";
 
 export interface PrivateReconciliationResult {
@@ -24,6 +24,7 @@ export interface PrivateReconciliationResult {
 
 export class PrivateJtcService {
   private readonly managedRooms = new Map<string, PrivateJtcRoomRecord>();
+  private readonly userProfiles = new Map<string, PrivateJtcUserProfile>();
   private readonly transferTimers = new Map<string, NodeJS.Timeout>();
   private readonly asyncLock = new AsyncLock();
   private readonly stateStore: PrivateJtcStateStore;
@@ -96,8 +97,56 @@ export class PrivateJtcService {
     this.transferTimers.clear();
   }
 
+  public getUserProfile(userId: string): PrivateJtcUserProfile | undefined {
+    return this.userProfiles.get(userId);
+  }
+
+  public setUserProfile(userId: string, profile: PrivateJtcUserProfile): void {
+    this.userProfiles.set(userId, profile);
+  }
+
+  public async ensureProfilesLoaded(guildId: string): Promise<void> {
+    if (this.userProfiles.size > 0) {
+      return;
+    }
+    const loaded = await this.stateStore.loadState(
+      guildId,
+      this.config.privateJtc.anchorCategoryId,
+    );
+    if (loaded?.userProfiles) {
+      for (const [uid, prof] of Object.entries(loaded.userProfiles)) {
+        this.userProfiles.set(uid, prof);
+      }
+    }
+  }
+
   /**
-   * Persists active rooms to state storage.
+   * Helper to update the original owner's persistent profile.
+   * Rule: changes made under transferred ownership are NOT stored in data.
+   */
+  private updateOwnerProfile(
+    record: PrivateJtcRoomRecord,
+    operatorId: string,
+    updater: (current: PrivateJtcUserProfile) => Partial<PrivateJtcUserProfile>,
+  ): void {
+    if (record.isTransferred || record.originalOwnerId !== operatorId) {
+      return;
+    }
+
+    const current = this.userProfiles.get(operatorId) ?? {
+      trustedUserIds: [],
+    };
+
+    const updates = updater(current);
+    this.userProfiles.set(operatorId, {
+      ...current,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Persists active rooms and user profiles to state storage.
    * Per user requirement: Any changes made under transferred ownership
    * are NOT stored in the database / data folder.
    */
@@ -123,12 +172,18 @@ export class PrivateJtcService {
       }
     }
 
+    const userProfiles: Record<string, PrivateJtcUserProfile> = {};
+    for (const [uid, prof] of this.userProfiles.entries()) {
+      userProfiles[uid] = prof;
+    }
+
     await this.stateStore.saveState(
       guildId,
       this.config.privateJtc.anchorCategoryId,
       {
         categoryId: this.categoryManager.getCategoryId() ?? undefined,
         rooms,
+        userProfiles,
       },
     );
   }
@@ -150,6 +205,12 @@ export class PrivateJtcService {
         guild.id,
         this.config.privateJtc.anchorCategoryId,
       );
+
+      if (loadedState?.userProfiles) {
+        for (const [userId, profile] of Object.entries(loadedState.userProfiles)) {
+          this.userProfiles.set(userId, profile);
+        }
+      }
 
       let totalScanned = 0;
       let retained = 0;
@@ -236,28 +297,41 @@ export class PrivateJtcService {
         `Private JTC trigger join by member "${member.user.tag}" (${member.id})`,
       );
 
+      await this.ensureProfilesLoaded(member.guild.id);
+      const savedProfile = this.userProfiles.get(member.id);
+
       const targetCategoryId =
         await this.categoryManager.getOrCreateCategory(member.guild);
 
-      const roomName = this.config.privateJtc.roomNameTemplate.replace(
-        "{username}",
-        member.user.username,
-      );
+      const roomName =
+        savedProfile?.customName && savedProfile.customName.trim().length > 0
+          ? savedProfile.customName.trim()
+          : this.config.privateJtc.roomNameTemplate.replace(
+              "{username}",
+              member.user.username,
+            );
+
+      const roomLimit = savedProfile?.userLimit ?? 0;
 
       const permissionOverwrites =
         this.permissionService.buildPrivateJtcRoomOverwrites({
           guildId: member.guild.id,
           ownerId: member.id,
+          trustedUserIds: savedProfile?.trustedUserIds ?? [],
+          locked: savedProfile?.locked ?? false,
+          hidden: savedProfile?.hidden ?? false,
+          chatDisabled: savedProfile?.chatDisabled ?? false,
         });
 
       this.log.info(
-        `Creating private room "${roomName}" in dynamic category (${targetCategoryId}) for owner "${member.user.tag}" (${member.id})`,
+        `Creating private room "${roomName}" in dynamic category (${targetCategoryId}) for owner "${member.user.tag}" (${member.id}) (restored profile: ${Boolean(savedProfile)})`,
       );
 
       const newChannel = (await member.guild.channels.create({
         name: roomName,
         type: ChannelType.GuildVoice,
         parent: targetCategoryId,
+        userLimit: roomLimit,
         permissionOverwrites,
         reason: `Cash Mod Private JTC creation for ${member.user.tag} (${member.id})`,
       })) as VoiceChannel;
@@ -292,8 +366,16 @@ export class PrivateJtcService {
             joinedAt: now,
           },
         ],
-        trustedUserIds: [],
-        settings: {},
+        trustedUserIds: savedProfile?.trustedUserIds
+          ? [...savedProfile.trustedUserIds]
+          : [],
+        settings: {
+          name: roomName,
+          userLimit: roomLimit,
+          locked: savedProfile?.locked ?? false,
+          hidden: savedProfile?.hidden ?? false,
+          chatDisabled: savedProfile?.chatDisabled ?? false,
+        },
       };
 
       // Post the interactive control interface embed with 12 emoji buttons
@@ -623,7 +705,10 @@ export class PrivateJtcService {
     if (trimmed.length === 0) return false;
 
     await channel.setName(trimmed, "Private JTC owner rename");
-    record.settings = { ...record.settings, userLimit: record.settings?.userLimit };
+    record.settings = { ...record.settings, name: trimmed };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      customName: trimmed,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(`Owner ${operatorId} renamed private room ${channel.id} to "${trimmed}"`);
     return true;
@@ -645,6 +730,9 @@ export class PrivateJtcService {
     const clamped = Math.max(0, Math.min(99, limit));
     await channel.setUserLimit(clamped, "Private JTC owner user limit");
     record.settings = { ...record.settings, userLimit: clamped };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      userLimit: clamped,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(`Owner ${operatorId} set private room ${channel.id} user limit to ${clamped}`);
     return true;
@@ -675,6 +763,9 @@ export class PrivateJtcService {
     }
 
     record.settings = { ...record.settings, locked: true };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      locked: true,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(`Owner ${operatorId} locked private room ${channel.id}`);
     return true;
@@ -697,6 +788,9 @@ export class PrivateJtcService {
     });
 
     record.settings = { ...record.settings, locked: false };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      locked: false,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(`Owner ${operatorId} unlocked private room ${channel.id}`);
     return true;
@@ -733,6 +827,9 @@ export class PrivateJtcService {
     }
 
     record.settings = { ...record.settings, hidden: true };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      hidden: true,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(`Owner ${operatorId} hid private room ${channel.id}`);
     return true;
@@ -755,6 +852,9 @@ export class PrivateJtcService {
     });
 
     record.settings = { ...record.settings, hidden: false };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      hidden: false,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(`Owner ${operatorId} unhid private room ${channel.id}`);
     return true;
@@ -785,6 +885,9 @@ export class PrivateJtcService {
     });
 
     record.settings = { ...record.settings, chatDisabled: newChatDisabled };
+    this.updateOwnerProfile(record, operatorId, () => ({
+      chatDisabled: newChatDisabled,
+    }));
     await this.saveCurrentState(channel.guild.id);
     this.log.info(
       `Owner ${operatorId} toggled text chat for private room ${channel.id} to disabled=${newChatDisabled}`,
@@ -822,6 +925,9 @@ export class PrivateJtcService {
     }
 
     if (added.length > 0) {
+      this.updateOwnerProfile(record, operatorId, () => ({
+        trustedUserIds: [...record.trustedUserIds],
+      }));
       await this.saveCurrentState(channel.guild.id);
       this.log.info(
         `Owner ${operatorId} trusted ${added.length} user(s) in room ${channel.id}: ${added.join(", ")}`,
@@ -860,6 +966,9 @@ export class PrivateJtcService {
     }
 
     if (removed.length > 0) {
+      this.updateOwnerProfile(record, operatorId, () => ({
+        trustedUserIds: [...record.trustedUserIds],
+      }));
       await this.saveCurrentState(channel.guild.id);
       this.log.info(
         `Owner ${operatorId} untrusted ${removed.length} user(s) in room ${channel.id}: ${removed.join(", ")}`,

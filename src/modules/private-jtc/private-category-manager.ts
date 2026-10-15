@@ -159,7 +159,18 @@ export class PrivateCategoryManager {
           await cat.delete("Private JTC category cleanup: 0 rooms remain");
         }
         this.categoryId = null;
-        await this.stateStore.clearState();
+        const currentState = await this.stateStore.loadState(
+          guild.id,
+          this.config.anchorCategoryId,
+        );
+        if (currentState) {
+          currentState.categoryId = undefined;
+          await this.stateStore.saveState(
+            guild.id,
+            this.config.anchorCategoryId,
+            currentState,
+          );
+        }
         return true;
       }
       return false;

@@ -31,6 +31,10 @@ export interface PrivateJtcOverwriteOptions {
   guildId: string;
   ownerId: string;
   roles?: JtcRoleIds;
+  trustedUserIds?: string[];
+  locked?: boolean;
+  hidden?: boolean;
+  chatDisabled?: boolean;
 }
 
 export class PermissionService {
@@ -161,7 +165,7 @@ export class PermissionService {
   public buildPrivateJtcRoomOverwrites(
     options: PrivateJtcOverwriteOptions,
   ): OverwriteResolvable[] {
-    const { guildId, ownerId, roles } = options;
+    const { guildId, ownerId, roles, trustedUserIds, locked, hidden, chatDisabled } = options;
     const everyonePolicy =
       this.permissionsConfig.policies.privateEveryone ??
       this.permissionsConfig.policies.everyone;
@@ -177,12 +181,28 @@ export class PermissionService {
 
     const overwrites: OverwriteResolvable[] = [];
 
-    // 1. @everyone role overwrite
+    // 1. @everyone role overwrite (adjusted for lock/hide/chatDisabled)
+    const everyoneAllow = new Set(everyonePolicy.allow);
+    const everyoneDeny = new Set(everyonePolicy.deny);
+
+    if (locked) {
+      everyoneAllow.delete(PermissionFlagsBits.Connect);
+      everyoneDeny.add(PermissionFlagsBits.Connect);
+    }
+    if (hidden) {
+      everyoneAllow.delete(PermissionFlagsBits.ViewChannel);
+      everyoneDeny.add(PermissionFlagsBits.ViewChannel);
+    }
+    if (chatDisabled) {
+      everyoneAllow.delete(PermissionFlagsBits.SendMessages);
+      everyoneDeny.add(PermissionFlagsBits.SendMessages);
+    }
+
     overwrites.push({
       id: guildId,
       type: OverwriteType.Role,
-      allow: everyonePolicy.allow,
-      deny: everyonePolicy.deny,
+      allow: Array.from(everyoneAllow),
+      deny: Array.from(everyoneDeny),
     });
 
     // 2. Restricted moderation roles (quarantine, super_focus, vc_restricted)
@@ -235,6 +255,24 @@ export class PermissionService {
       allow: ownerPolicy.allow,
       deny: ownerPolicy.deny,
     });
+
+    // 4. Trusted users member overwrites
+    if (trustedUserIds && trustedUserIds.length > 0) {
+      for (const trustedId of trustedUserIds) {
+        if (trustedId && trustedId !== ownerId) {
+          overwrites.push({
+            id: trustedId,
+            type: OverwriteType.Member,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.Connect,
+              PermissionFlagsBits.SendMessages,
+            ],
+            deny: [],
+          });
+        }
+      }
+    }
 
     return overwrites;
   }

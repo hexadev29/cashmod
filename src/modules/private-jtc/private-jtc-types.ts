@@ -4,10 +4,21 @@ export interface PrivateJtcUserPresence {
 }
 
 export interface PrivateJtcRoomSettings {
+  name?: string;
   userLimit?: number;
   locked?: boolean;
   hidden?: boolean;
   chatDisabled?: boolean;
+}
+
+export interface PrivateJtcUserProfile {
+  customName?: string;
+  userLimit?: number;
+  locked?: boolean;
+  hidden?: boolean;
+  chatDisabled?: boolean;
+  trustedUserIds?: string[];
+  updatedAt?: string;
 }
 
 export interface PrivateJtcRoomRecord {
@@ -27,4 +38,5 @@ export interface PrivateJtcRoomRecord {
 export interface PrivateJtcState {
   categoryId?: string;
   rooms: Record<string, PrivateJtcRoomRecord>;
+  userProfiles?: Record<string, PrivateJtcUserProfile>;
 }

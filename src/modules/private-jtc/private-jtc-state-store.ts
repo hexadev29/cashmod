@@ -10,6 +10,7 @@ export interface PrivateJtcPersistentDocument {
   anchorCategoryId: string;
   categoryId?: string;
   rooms: Record<string, PrivateJtcRoomRecord>;
+  userProfiles?: Record<string, import("./private-jtc-types.js").PrivateJtcUserProfile>;
   updatedAt: string;
 }
 
@@ -72,6 +73,7 @@ export class PrivateJtcStateStore {
       return {
         categoryId: parsed.categoryId,
         rooms: parsed.rooms ?? {},
+        userProfiles: parsed.userProfiles ?? {},
       };
     } catch (err: any) {
       this.log.error(
@@ -99,6 +101,7 @@ export class PrivateJtcStateStore {
         anchorCategoryId,
         categoryId: state.categoryId,
         rooms: state.rooms,
+        userProfiles: state.userProfiles ?? {},
         updatedAt: new Date().toISOString(),
       };
 
