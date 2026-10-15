@@ -226,6 +226,7 @@ export class PrivateJtcService {
       );
 
       await this.categoryManager.initFromState(guild);
+      await this.categoryManager.realignCategory(guild);
 
       const loadedState = await this.stateStore.loadState(
         guild.id,

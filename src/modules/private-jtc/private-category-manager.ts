@@ -32,9 +32,8 @@ export class PrivateCategoryManager {
    * Initializes category state from disk on startup and verifies anchor category.
    */
   public async initFromState(guild: Guild): Promise<void> {
-    const anchorChannel = await guild.channels
-      .fetch(this.config.anchorCategoryId)
-      .catch(() => null);
+    const guildChannels = await guild.channels.fetch().catch(() => null);
+    const anchorChannel = guildChannels?.get(this.config.anchorCategoryId) ?? null;
 
     if (!anchorChannel || anchorChannel.type !== ChannelType.GuildCategory) {
       this.log.error(
@@ -48,9 +47,7 @@ export class PrivateCategoryManager {
       this.config.anchorCategoryId,
     );
     if (loaded?.categoryId) {
-      const existingCat = await guild.channels
-        .fetch(loaded.categoryId)
-        .catch(() => null);
+      const existingCat = guildChannels?.get(loaded.categoryId) ?? null;
       if (existingCat && existingCat.type === ChannelType.GuildCategory) {
         this.categoryId = loaded.categoryId;
         this.log.info(
@@ -62,6 +59,38 @@ export class PrivateCategoryManager {
           `Private category ${loaded.categoryId} in state no longer exists in Discord. Discarding.`,
         );
       }
+    }
+
+    // Check if category wasn't restored from state, but already exists in guild with matching name
+    if (!this.categoryId && guildChannels) {
+      for (const [, ch] of guildChannels) {
+        if (
+          ch != null &&
+          ch.type === ChannelType.GuildCategory &&
+          ch.name.toLowerCase() === this.config.categoryName.toLowerCase() &&
+          ch.id !== this.config.anchorCategoryId
+        ) {
+          this.categoryId = ch.id;
+          this.log.info(
+            `Discovered existing private category "${ch.name}" (${ch.id}) in guild; adopting.`,
+          );
+          const currentState = (await this.stateStore.loadState(
+            guild.id,
+            this.config.anchorCategoryId,
+          )) ?? { rooms: {} };
+          currentState.categoryId = ch.id;
+          await this.stateStore.saveState(
+            guild.id,
+            this.config.anchorCategoryId,
+            currentState,
+          );
+          break;
+        }
+      }
+    }
+
+    if (this.categoryId) {
+      await this.realignCategory(guild);
     }
   }
 
@@ -85,9 +114,38 @@ export class PrivateCategoryManager {
         return this.categoryId;
       }
 
-      const anchor = (await guild.channels
-        .fetch(this.config.anchorCategoryId)
-        .catch(() => null)) as CategoryChannel | null;
+      const guildChannels = await guild.channels.fetch();
+
+      // Check if a category matching the configured name already exists in guild
+      for (const [, ch] of guildChannels) {
+        if (
+          ch != null &&
+          ch.type === ChannelType.GuildCategory &&
+          ch.name.toLowerCase() === this.config.categoryName.toLowerCase() &&
+          ch.id !== this.config.anchorCategoryId
+        ) {
+          this.categoryId = ch.id;
+          this.log.info(
+            `Discovered existing private category "${ch.name}" (${ch.id}); adopting.`,
+          );
+          const currentState = (await this.stateStore.loadState(
+            guild.id,
+            this.config.anchorCategoryId,
+          )) ?? { rooms: {} };
+          currentState.categoryId = ch.id;
+          await this.stateStore.saveState(
+            guild.id,
+            this.config.anchorCategoryId,
+            currentState,
+          );
+          await this.realignCategory(guild);
+          return ch.id;
+        }
+      }
+
+      const anchor = guildChannels.get(
+        this.config.anchorCategoryId,
+      ) as CategoryChannel | undefined;
 
       if (!anchor || anchor.type !== ChannelType.GuildCategory) {
         throw new Error(
@@ -127,9 +185,73 @@ export class PrivateCategoryManager {
         `Created private dynamic category "${this.config.categoryName}" (${newCategory.id})`,
       );
 
+      // Re-align explicitly to guarantee placement directly below anchor
+      try {
+        if (typeof newCategory.setPosition === "function") {
+          await newCategory.setPosition(targetPosition, {
+            reason: "Cash Mod Private JTC category alignment below anchor",
+          });
+        } else if (typeof guild.channels?.setPositions === "function") {
+          await guild.channels.setPositions([
+            { channel: newCategory.id, position: targetPosition },
+          ]);
+        }
+      } catch (posErr: any) {
+        this.log.warn(
+          `Failed to explicitly set position for private category: ${posErr?.message}`,
+        );
+      }
+
       return newCategory.id;
     } finally {
       release();
+    }
+  }
+
+  /**
+   * Enforces that the managed dynamic private category is positioned
+   * directly below the anchor category (anchor.position + 1).
+   */
+  public async realignCategory(guild: Guild): Promise<void> {
+    if (!this.categoryId) {
+      return;
+    }
+
+    try {
+      const guildChannels = await guild.channels.fetch();
+      const anchor = guildChannels.get(this.config.anchorCategoryId);
+      if (!anchor || anchor.type !== ChannelType.GuildCategory) {
+        return;
+      }
+      const anchorCategory = anchor as CategoryChannel;
+      const targetPosition = anchorCategory.position + 1;
+
+      const managed = guildChannels.get(this.categoryId);
+      if (!managed || managed.type !== ChannelType.GuildCategory) {
+        return;
+      }
+      const managedCategory = managed as CategoryChannel;
+
+      if (managedCategory.position !== targetPosition) {
+        this.log.info(
+          `Re-aligning private category "${managedCategory.name}" position from ${managedCategory.position} to ${targetPosition} directly below anchor "${anchorCategory.name}" (${anchorCategory.position})`,
+        );
+        if (typeof managedCategory.setPosition === "function") {
+          await managedCategory.setPosition(targetPosition, {
+            reason: "Cash Mod Private JTC category realignment below anchor",
+          });
+        } else if (typeof guild.channels?.setPositions === "function") {
+          await guild.channels.setPositions([
+            { channel: managedCategory.id, position: targetPosition },
+          ]);
+        }
+      }
+    } catch (err: any) {
+      this.log.warn(
+        `Failed to realign private category position: ${err?.message}`,
+        undefined,
+        err,
+      );
     }
   }
 
