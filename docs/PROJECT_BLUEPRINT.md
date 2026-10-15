@@ -5,12 +5,14 @@
 Cash Mod is a single-guild Discord bot written in TypeScript using discord.js v14.
 
 ### In scope now
+
 1. Join-to-Create (JTC) voice room lifecycle.
 2. Automatic handler discovery, validation, and registration.
 3. Configuration validation and diagnostics needed to run those systems.
 4. Centralized permissions policy used by JTC.
 
 ### Not in scope now
+
 Tickets, moderation, economy, leveling, music, web dashboard, multi-guild tenancy, database-backed configuration, and slash commands for setup/configuration. Do not implement these just because future config folders or extension points are shown below.
 
 ## 2. Proposed repository architecture
@@ -89,7 +91,9 @@ This is a proposed logical layout, not a requirement to create every file immedi
 ## 3. Responsibilities and dependency direction
 
 ### `config/`
+
 Source-controlled, non-secret defaults and deployment-specific values. Each domain/feature gets its own directory. Examples:
+
 - `config/discord/`: guild ID, client intents/partial settings, configured channel IDs when deployment-specific.
 - `config/permissions/`: shared permission policy and defaults.
 - `config/jtc/`: trigger voice channel IDs, category IDs/order, room naming, room limits, cleanup behavior, and positioning anchor.
@@ -98,21 +102,27 @@ Source-controlled, non-secret defaults and deployment-specific values. Each doma
 Do not place bot tokens or other secrets here. Use environment variables for secrets. Avoid reading `process.env` throughout feature code; load and validate environment/config once at startup and pass typed configuration into services.
 
 ### `src/core/`
+
 Cross-cutting infrastructure: validated configuration, lifecycle, shared errors/events, and the permission service. Core must not contain server-specific IDs or JTC-specific behavior.
 
 ### `src/modules/jtc/`
+
 JTC domain logic: allocating the first missing room number, creating rooms, ordering rooms, handling cleanup, and reconciling stale state after restarts. Keep Discord event parsing in handlers and business rules in the service layer where practical.
 
 ### `src/handlers/`
+
 Thin adapters between Discord events and feature services. The voice-state handler should validate the event context and delegate to JTC services; it should not become the place where all JTC logic lives.
 
 ### `src/handlers/loader/`
+
 Discover only approved handler files, import them safely, validate required exports and event metadata, detect duplicate identities, then register. Keep each stage independently observable and testable.
 
 ### `src/diagnostics/`
+
 Human-friendly startup banner and colorized terminal output, structured logs, log levels, timing, error stacks, and secret redaction. Color must degrade gracefully when output is redirected or unsupported.
 
 ### `tests/`
+
 Test deterministic allocation, concurrency safeguards, cleanup decisions, config validation, handler export validation, duplicate detection, discovery exclusions, and loader failure reporting. Tests and fixtures must never be loaded as production handlers.
 
 ## 4. Configuration boundaries
@@ -127,6 +137,7 @@ Test deterministic allocation, concurrency safeguards, cleanup decisions, config
 ## 5. Handler loader contract
 
 The loader should report the stage and outcome for each candidate:
+
 1. Discovery — why a file was included or excluded.
 2. Import — whether dynamic import succeeded.
 3. Export validation — whether the module exposes the required handler contract.
@@ -140,14 +151,17 @@ The loader must work with the repository's actual development and compiled produ
 ## 6. JTC behavior contract
 
 ### Category order
+
 `Solo → Duo → Trio → Quad → Penta → Hexa → Septa → Octa`
 
 Keep this order in JTC configuration, not scattered conditionals.
 
 ### Allocation
+
 Choose the first missing positive room number within the applicable room group. Example: existing Solo rooms 1, 2, 3, and 5 means the next allocated room is 4, not 6. Parse only names matching the configured naming pattern; do not mistake unrelated channels for JTC rooms.
 
 ### Creation flow
+
 1. Receive a voice-state transition.
 2. Ignore irrelevant transitions and duplicate/replayed work safely.
 3. Confirm the member joined a configured trigger channel.
@@ -160,6 +174,7 @@ Choose the first missing positive room number within the applicable room group. 
 10. Release guards in `finally` and log failures with context.
 
 ### Cleanup and resilience
+
 - Delete only eligible empty temporary rooms; never delete unrelated user-managed channels.
 - Handle API rejection, deleted/missing channels, stale cache, and partially completed creation.
 - Reconcile stale temporary rooms after restart using an explicit, safe rule.
@@ -178,6 +193,7 @@ Choose the first missing positive room number within the applicable room group. 
 ## 8. Logging and startup UX
 
 Provide a polished startup banner and consistent logs:
+
 - Levels: `fatal`, `error`, `warn`, `info`, `debug`, `trace`.
 - Human-readable colorized console output with a plain-text fallback.
 - Structured fields for subsystem, event, file, stage, duration, and error.
@@ -188,6 +204,7 @@ Provide a polished startup banner and consistent logs:
 ## 9. Minimum tests before calling the feature complete
 
 ### Handler loader
+
 - valid handler loads and registers;
 - invalid export is rejected with a useful diagnostic;
 - duplicate handler identity is detected;
@@ -196,6 +213,7 @@ Provide a polished startup banner and consistent logs:
 - dev and production path resolution is covered.
 
 ### JTC
+
 - first missing number is chosen;
 - names that do not match the configured pattern are ignored;
 - concurrent joins do not create duplicate rooms;
@@ -205,6 +223,7 @@ Provide a polished startup banner and consistent logs:
 - room ordering logic has tests for insertion between existing rooms.
 
 ### Configuration and safety
+
 - invalid required config fails early with actionable errors;
 - secrets are not printed;
 - no configurable guild/channel IDs are embedded in feature/core implementation code.
@@ -212,6 +231,7 @@ Provide a polished startup banner and consistent logs:
 ## 10. Implementation process
 
 Before coding, inspect the real repository and provide:
+
 1. actual folder tree;
 2. package scripts, dependencies, runtime and build entrypoints;
 3. current handler-loader behavior;
