@@ -1,5 +1,6 @@
 import {
   ChannelType,
+  PermissionFlagsBits,
   type Guild,
   type GuildMember,
   type VoiceChannel,
@@ -10,6 +11,7 @@ import { AsyncLock } from "../jtc/room-allocator.js";
 import { JtcOperationQueue, TaskPriority } from "../jtc/jtc-queue.js";
 import { PrivateCategoryManager } from "./private-category-manager.js";
 import { PrivateJtcStateStore } from "./private-jtc-state-store.js";
+import { buildPrivateInterfaceMessage } from "./private-interface-builder.js";
 import type { PrivateJtcRoomRecord } from "./private-jtc-types.js";
 import { logger } from "../../diagnostics/logger.js";
 
@@ -86,11 +88,29 @@ export class PrivateJtcService {
 
   /**
    * Persists active rooms to state storage.
+   * Per user requirement: Any changes made under transferred ownership
+   * are NOT stored in the database / data folder.
    */
   private async saveCurrentState(guildId: string): Promise<void> {
     const rooms: Record<string, PrivateJtcRoomRecord> = {};
     for (const [id, rec] of this.managedRooms.entries()) {
-      rooms[id] = rec;
+      if (rec.isTransferred) {
+        // Filter out changes made under transferred ownership from persistent storage
+        rooms[id] = {
+          channelId: rec.channelId,
+          guildId: rec.guildId,
+          categoryId: rec.categoryId,
+          ownerId: rec.originalOwnerId, // preserve original creator baseline
+          originalOwnerId: rec.originalOwnerId,
+          isTransferred: true,
+          createdAt: rec.createdAt,
+          joinHistory: rec.joinHistory,
+          trustedUserIds: [], // do not persist transferred owner's trusted list
+          settings: {},       // do not persist transferred owner's settings
+        };
+      } else {
+        rooms[id] = rec;
+      }
     }
 
     await this.stateStore.saveState(
@@ -155,6 +175,12 @@ export class PrivateJtcService {
             continue;
           }
 
+          // Ensure trustedUserIds and settings are initialized
+          record.trustedUserIds = record.trustedUserIds ?? [];
+          record.settings = record.settings ?? {};
+          record.originalOwnerId = record.originalOwnerId ?? record.ownerId;
+          record.isTransferred = record.isTransferred ?? false;
+
           // Room exists and has occupants
           this.managedRooms.set(channelId, record);
           retained++;
@@ -184,7 +210,7 @@ export class PrivateJtcService {
 
   /**
    * Handles when a member joins the private trigger voice channel.
-   * Creates a dedicated private room, sets owner permissions, moves member, and persists state.
+   * Creates a dedicated private room, sets owner permissions, moves member, sends control interface, and persists state.
    */
   public async handleVoiceJoin(
     member: GuildMember,
@@ -247,6 +273,8 @@ export class PrivateJtcService {
         guildId: member.guild.id,
         categoryId: targetCategoryId,
         ownerId: member.id,
+        originalOwnerId: member.id,
+        isTransferred: false,
         createdAt: now,
         joinHistory: [
           {
@@ -254,7 +282,24 @@ export class PrivateJtcService {
             joinedAt: now,
           },
         ],
+        trustedUserIds: [],
+        settings: {},
       };
+
+      // Post the interactive control interface embed with 12 emoji buttons
+      if (typeof (newChannel as any).send === "function") {
+        try {
+          const interfacePayload = buildPrivateInterfaceMessage(
+            this.config.privateJtc,
+          );
+          const interfaceMsg = await (newChannel as any).send(interfacePayload);
+          record.interfaceMessageId = interfaceMsg?.id;
+        } catch (msgErr: any) {
+          this.log.warn(
+            `Failed to send private interface message to ${newChannel.id}: ${msgErr?.message}`,
+          );
+        }
+      }
 
       this.managedRooms.set(newChannel.id, record);
       await this.saveCurrentState(member.guild.id);
@@ -479,6 +524,7 @@ export class PrivateJtcService {
 
     const oldOwnerId = record.ownerId;
     record.ownerId = newOwnerId;
+    record.isTransferred = true;
 
     // 1. Revoke old owner permissions
     if (oldOwnerId && oldOwnerId !== newOwnerId) {
@@ -540,10 +586,309 @@ export class PrivateJtcService {
       );
     }
 
-    // 4. Update persistent state
+    // 4. Update persistent state (filtered per transferred ownership rule)
     await this.saveCurrentState(channel.guild.id);
 
     return true;
+  }
+
+  // ==========================================
+  // ROOM OWNER CONTROL OPERATIONS
+  // ==========================================
+
+  /**
+   * Renames the private voice channel.
+   */
+  public async renameRoom(
+    channel: VoiceChannel,
+    newName: string,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return false;
+    }
+
+    const trimmed = newName.trim().slice(0, 100);
+    if (trimmed.length === 0) return false;
+
+    await channel.setName(trimmed, "Private JTC owner rename");
+    record.settings = { ...record.settings, userLimit: record.settings?.userLimit };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(`Owner ${operatorId} renamed private room ${channel.id} to "${trimmed}"`);
+    return true;
+  }
+
+  /**
+   * Sets the user limit on the private voice channel (0 = unlimited).
+   */
+  public async setRoomLimit(
+    channel: VoiceChannel,
+    limit: number,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return false;
+    }
+
+    const clamped = Math.max(0, Math.min(99, limit));
+    await channel.setUserLimit(clamped, "Private JTC owner user limit");
+    record.settings = { ...record.settings, userLimit: clamped };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(`Owner ${operatorId} set private room ${channel.id} user limit to ${clamped}`);
+    return true;
+  }
+
+  /**
+   * Locks the private voice channel for @everyone while keeping trusted users connected.
+   */
+  public async lockRoom(
+    channel: VoiceChannel,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return false;
+    }
+
+    await channel.permissionOverwrites.edit(channel.guild.roles.everyone, {
+      Connect: false,
+    });
+
+    // Ensure all trusted users have explicit Connect: true
+    for (const trustedId of record.trustedUserIds) {
+      await channel.permissionOverwrites.edit(trustedId, {
+        Connect: true,
+        ViewChannel: true,
+      });
+    }
+
+    record.settings = { ...record.settings, locked: true };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(`Owner ${operatorId} locked private room ${channel.id}`);
+    return true;
+  }
+
+  /**
+   * Unlocks the private voice channel for @everyone.
+   */
+  public async unlockRoom(
+    channel: VoiceChannel,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return false;
+    }
+
+    await channel.permissionOverwrites.edit(channel.guild.roles.everyone, {
+      Connect: null,
+    });
+
+    record.settings = { ...record.settings, locked: false };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(`Owner ${operatorId} unlocked private room ${channel.id}`);
+    return true;
+  }
+
+  /**
+   * Hides the private voice channel for @everyone.
+   */
+  public async hideRoom(
+    channel: VoiceChannel,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return false;
+    }
+
+    await channel.permissionOverwrites.edit(channel.guild.roles.everyone, {
+      ViewChannel: false,
+    });
+
+    // Ensure owner and trusted users have explicit ViewChannel: true
+    await channel.permissionOverwrites.edit(record.ownerId, {
+      ViewChannel: true,
+      Connect: true,
+      SendMessages: true,
+    });
+
+    for (const trustedId of record.trustedUserIds) {
+      await channel.permissionOverwrites.edit(trustedId, {
+        ViewChannel: true,
+        Connect: true,
+      });
+    }
+
+    record.settings = { ...record.settings, hidden: true };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(`Owner ${operatorId} hid private room ${channel.id}`);
+    return true;
+  }
+
+  /**
+   * Unhides the private voice channel for @everyone.
+   */
+  public async unhideRoom(
+    channel: VoiceChannel,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return false;
+    }
+
+    await channel.permissionOverwrites.edit(channel.guild.roles.everyone, {
+      ViewChannel: null,
+    });
+
+    record.settings = { ...record.settings, hidden: false };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(`Owner ${operatorId} unhid private room ${channel.id}`);
+    return true;
+  }
+
+  /**
+   * Toggles voice chat text messages for @everyone.
+   * Returns true if chat is now disabled, false if enabled.
+   */
+  public async toggleChat(
+    channel: VoiceChannel,
+    operatorId: string,
+  ): Promise<boolean | null> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return null;
+    }
+
+    const everyoneOverwrite = channel.permissionOverwrites.cache.get(
+      channel.guild.roles.everyone.id,
+    );
+    const isCurrentlyDenied =
+      everyoneOverwrite?.deny?.has(PermissionFlagsBits.SendMessages) ?? false;
+    const newChatDisabled = !isCurrentlyDenied;
+
+    await channel.permissionOverwrites.edit(channel.guild.roles.everyone, {
+      SendMessages: newChatDisabled ? false : null,
+    });
+
+    record.settings = { ...record.settings, chatDisabled: newChatDisabled };
+    await this.saveCurrentState(channel.guild.id);
+    this.log.info(
+      `Owner ${operatorId} toggled text chat for private room ${channel.id} to disabled=${newChatDisabled}`,
+    );
+    return newChatDisabled;
+  }
+
+  /**
+   * Grants trust to one or more users.
+   */
+  public async trustUsers(
+    channel: VoiceChannel,
+    userIds: string[],
+    operatorId: string,
+  ): Promise<string[]> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return [];
+    }
+
+    record.trustedUserIds = record.trustedUserIds ?? [];
+    const added: string[] = [];
+
+    for (const uid of userIds) {
+      if (uid === operatorId || record.trustedUserIds.includes(uid)) {
+        continue;
+      }
+      record.trustedUserIds.push(uid);
+      added.push(uid);
+
+      await channel.permissionOverwrites.edit(uid, {
+        ViewChannel: true,
+        Connect: true,
+      });
+    }
+
+    if (added.length > 0) {
+      await this.saveCurrentState(channel.guild.id);
+      this.log.info(
+        `Owner ${operatorId} trusted ${added.length} user(s) in room ${channel.id}: ${added.join(", ")}`,
+      );
+    }
+
+    return added;
+  }
+
+  /**
+   * Revokes trust from one or more users.
+   */
+  public async untrustUsers(
+    channel: VoiceChannel,
+    userIds: string[],
+    operatorId: string,
+  ): Promise<string[]> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId) {
+      return [];
+    }
+
+    record.trustedUserIds = record.trustedUserIds ?? [];
+    const removed: string[] = [];
+
+    for (const uid of userIds) {
+      if (!record.trustedUserIds.includes(uid)) {
+        continue;
+      }
+      record.trustedUserIds = record.trustedUserIds.filter((id) => id !== uid);
+      removed.push(uid);
+
+      if (uid !== record.ownerId) {
+        await channel.permissionOverwrites.delete(uid).catch(() => {});
+      }
+    }
+
+    if (removed.length > 0) {
+      await this.saveCurrentState(channel.guild.id);
+      this.log.info(
+        `Owner ${operatorId} untrusted ${removed.length} user(s) in room ${channel.id}: ${removed.join(", ")}`,
+      );
+    }
+
+    return removed;
+  }
+
+  /**
+   * Disconnects a non-owner member from the private voice channel.
+   */
+  public async kickMember(
+    channel: VoiceChannel,
+    targetUserId: string,
+    operatorId: string,
+  ): Promise<boolean> {
+    const record = this.managedRooms.get(channel.id);
+    if (!record || record.ownerId !== operatorId || targetUserId === operatorId) {
+      return false;
+    }
+
+    const member = channel.members.get(targetUserId);
+    if (!member || !member.voice) {
+      return false;
+    }
+
+    try {
+      await member.voice.disconnect("Kicked by private room owner");
+      this.log.info(
+        `Owner ${operatorId} kicked member ${targetUserId} from private room ${channel.id}`,
+      );
+      return true;
+    } catch (kickErr: any) {
+      this.log.warn(
+        `Failed to kick member ${targetUserId} from room ${channel.id}: ${kickErr?.message}`,
+      );
+      return false;
+    }
   }
 
   /**
