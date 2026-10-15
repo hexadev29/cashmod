@@ -83,6 +83,11 @@ export const startBot = async (): Promise<StartBotResult> => {
       `Discord client ready as ${readyClient.user.tag} (${readyClient.user.id})`,
     );
 
+    // Pre-fetch application emojis so custom bot emojis are loaded in cache
+    await readyClient.application?.emojis?.fetch().catch((err: any) => {
+      logger.debug(`Could not pre-fetch application emojis: ${err?.message}`);
+    });
+
     const targetGuild = readyClient.guilds.cache.get(config.discord.guildId);
     if (targetGuild) {
       logger.info(

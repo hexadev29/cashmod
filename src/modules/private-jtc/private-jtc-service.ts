@@ -415,6 +415,7 @@ export class PrivateJtcService {
         try {
           const interfacePayload = buildPrivateInterfaceMessage(
             this.config.privateJtc,
+            member.client,
           );
           const interfaceMsg = await (newChannel as any).send(interfacePayload);
           record.interfaceMessageId = interfaceMsg?.id;

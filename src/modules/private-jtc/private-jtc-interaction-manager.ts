@@ -8,9 +8,13 @@ import {
   type Interaction,
   type VoiceChannel,
 } from "discord.js";
-import type { PrivateJtcConfig } from "../../../config/private-jtc/private-jtc.config.js";
+import type {
+  PrivateJtcConfig,
+  PrivateJtcEmojisConfig,
+} from "../../../config/private-jtc/private-jtc.config.js";
 import type { PrivateJtcService } from "./private-jtc-service.js";
 import { buildUntrustPaginationPayload } from "./private-interface-builder.js";
+import { formatEmoji } from "./private-emoji-helper.js";
 import { logger } from "../../diagnostics/logger.js";
 
 export class PrivateJtcInteractionManager {
@@ -22,6 +26,13 @@ export class PrivateJtcInteractionManager {
     private readonly config: PrivateJtcConfig,
     private readonly service: PrivateJtcService,
   ) {}
+
+  private emoji(
+    name: keyof PrivateJtcEmojisConfig,
+    interaction?: Interaction | any,
+  ): string {
+    return formatEmoji(name, this.config.emojis[name], interaction?.client);
+  }
 
   /**
    * Determines if the interaction belongs to Private JTC controls.
@@ -43,7 +54,7 @@ export class PrivateJtcInteractionManager {
     if (!channel || !channel.isVoiceBased()) {
       if ("reply" in interaction && typeof interaction.reply === "function") {
         await interaction.reply({
-          content: `<:${this.config.emojis.cross}> This control can only be used inside a private voice room.`,
+          content: `${this.emoji("cross", interaction)} This control can only be used inside a private voice room.`,
           ephemeral: true,
         });
       }
@@ -54,7 +65,7 @@ export class PrivateJtcInteractionManager {
     if (!record) {
       if ("reply" in interaction && typeof interaction.reply === "function") {
         await interaction.reply({
-          content: `<:${this.config.emojis.cross}> This voice room is no longer managed by Cash Mod.`,
+          content: `${this.emoji("cross", interaction)} This voice room is no longer managed by Cash Mod.`,
           ephemeral: true,
         });
       }
@@ -65,14 +76,12 @@ export class PrivateJtcInteractionManager {
     if (interaction.user.id !== record.ownerId) {
       if ("reply" in interaction && typeof interaction.reply === "function") {
         await interaction.reply({
-          content: `<:${this.config.emojis.cross}> Only the room owner (<@${record.ownerId}>) can use these controls.`,
+          content: `${this.emoji("cross", interaction)} Only the room owner (<@${record.ownerId}>) can use these controls.`,
           ephemeral: true,
         });
       }
       return;
     }
-
-    const { emojis } = this.config;
 
     try {
       if (interaction.isButton()) {
@@ -103,7 +112,7 @@ export class PrivateJtcInteractionManager {
       if ("reply" in interaction && typeof interaction.reply === "function") {
         if (!interaction.replied && !interaction.deferred) {
           await interaction.reply({
-            content: `<:${emojis.cross}> An unexpected error occurred while processing your request.`,
+            content: `${this.emoji("cross", interaction)} An unexpected error occurred while processing your request.`,
             ephemeral: true,
           });
         }
@@ -120,7 +129,6 @@ export class PrivateJtcInteractionManager {
     record: any,
   ): Promise<void> {
     const customId: string = interaction.customId;
-    const { emojis } = this.config;
 
     switch (customId) {
       case "pjtc:rename": {
@@ -168,7 +176,7 @@ export class PrivateJtcInteractionManager {
       case "pjtc:lock": {
         await this.service.lockRoom(channel, interaction.user.id);
         await interaction.reply({
-          content: `<:${emojis.lock}> Channel locked! Only trusted members can connect.`,
+          content: `${this.emoji("lock", interaction)} Channel locked! Only trusted members can connect.`,
           ephemeral: true,
         });
         return;
@@ -177,7 +185,7 @@ export class PrivateJtcInteractionManager {
       case "pjtc:unlock": {
         await this.service.unlockRoom(channel, interaction.user.id);
         await interaction.reply({
-          content: `<:${emojis.unlock}> Channel unlocked! Anyone can connect.`,
+          content: `${this.emoji("unlock", interaction)} Channel unlocked! Anyone can connect.`,
           ephemeral: true,
         });
         return;
@@ -186,7 +194,7 @@ export class PrivateJtcInteractionManager {
       case "pjtc:hide": {
         await this.service.hideRoom(channel, interaction.user.id);
         await interaction.reply({
-          content: `<:${emojis.hide}> Channel hidden! Only trusted members and occupants can see this room.`,
+          content: `${this.emoji("hide", interaction)} Channel hidden! Only trusted members and occupants can see this room.`,
           ephemeral: true,
         });
         return;
@@ -195,7 +203,7 @@ export class PrivateJtcInteractionManager {
       case "pjtc:unhide": {
         await this.service.unhideRoom(channel, interaction.user.id);
         await interaction.reply({
-          content: `<:${emojis.unhide}> Channel unhidden! Everyone can view this room.`,
+          content: `${this.emoji("unhide", interaction)} Channel unhidden! Everyone can view this room.`,
           ephemeral: true,
         });
         return;
@@ -207,7 +215,7 @@ export class PrivateJtcInteractionManager {
           interaction.user.id,
         );
         await interaction.reply({
-          content: `<:${emojis.chat}> Voice text chat has been **${disabled ? "disabled" : "enabled"}**.`,
+          content: `${this.emoji("chat", interaction)} Voice text chat has been **${disabled ? "disabled" : "enabled"}**.`,
           ephemeral: true,
         });
         return;
@@ -225,7 +233,7 @@ export class PrivateJtcInteractionManager {
         );
 
         await interaction.reply({
-          content: `<:${emojis.trust}> Select user(s) to trust in this room:`,
+          content: `${this.emoji("trust", interaction)} Select user(s) to trust in this room:`,
           components: [row],
           ephemeral: true,
         });
@@ -250,7 +258,8 @@ export class PrivateJtcInteractionManager {
           channel.id,
           displays,
           1,
-          emojis,
+          this.config.emojis,
+          interaction.client,
         );
         await interaction.reply({
           content: payload.content,
@@ -272,7 +281,7 @@ export class PrivateJtcInteractionManager {
         );
 
         await interaction.reply({
-          content: `<:${emojis.transfer}> Select a user to transfer ownership to:`,
+          content: `${this.emoji("transfer", interaction)} Select a user to transfer ownership to:`,
           components: [row],
           ephemeral: true,
         });
@@ -288,12 +297,12 @@ export class PrivateJtcInteractionManager {
             reason: "Private JTC owner invite button",
           });
           await interaction.reply({
-            content: `<:${emojis.invite}> Here is an invite link to your voice room:\n${invite.url}`,
+            content: `${this.emoji("invite", interaction)} Here is an invite link to your voice room:\n${invite.url}`,
             ephemeral: true,
           });
         } catch (invErr: any) {
           await interaction.reply({
-            content: `<:${emojis.cross}> Failed to create invite link: ${invErr?.message}`,
+            content: `${this.emoji("cross", interaction)} Failed to create invite link: ${invErr?.message}`,
             ephemeral: true,
           });
         }
@@ -307,7 +316,7 @@ export class PrivateJtcInteractionManager {
 
         if (occupants.size === 0) {
           await interaction.reply({
-            content: `<:${emojis.cross}> There are no other members in this voice channel to kick.`,
+            content: `${this.emoji("cross", interaction)} There are no other members in this voice channel to kick.`,
             ephemeral: true,
           });
           return;
@@ -331,7 +340,7 @@ export class PrivateJtcInteractionManager {
         );
 
         await interaction.reply({
-          content: `<:${emojis.kick}> Select an occupant to disconnect from this room:`,
+          content: `${this.emoji("kick", interaction)} Select an occupant to disconnect from this room:`,
           components: [row],
           ephemeral: true,
         });
@@ -359,7 +368,8 @@ export class PrivateJtcInteractionManager {
         channel.id,
         displays,
         targetPage,
-        emojis,
+        this.config.emojis,
+        interaction.client,
       );
       await interaction.update({
         content: payload.content,
@@ -376,7 +386,6 @@ export class PrivateJtcInteractionManager {
     channel: VoiceChannel,
   ): Promise<void> {
     const customId: string = interaction.customId;
-    const { emojis } = this.config;
 
     if (customId === "pjtc:modal_rename") {
       const newName = interaction.fields.getTextInputValue("name_input");
@@ -387,12 +396,12 @@ export class PrivateJtcInteractionManager {
       );
       if (ok) {
         await interaction.reply({
-          content: `<:${emojis.success}> Channel renamed to **${newName.trim()}**.`,
+          content: `${this.emoji("success", interaction)} Channel renamed to **${newName.trim()}**.`,
           ephemeral: true,
         });
       } else {
         await interaction.reply({
-          content: `<:${emojis.cross}> Failed to rename channel.`,
+          content: `${this.emoji("cross", interaction)} Failed to rename channel.`,
           ephemeral: true,
         });
       }
@@ -405,7 +414,7 @@ export class PrivateJtcInteractionManager {
 
       if (isNaN(limit) || limit < 0 || limit > 99) {
         await interaction.reply({
-          content: `<:${emojis.cross}> Please enter a valid number between 0 and 99.`,
+          content: `${this.emoji("cross", interaction)} Please enter a valid number between 0 and 99.`,
           ephemeral: true,
         });
         return;
@@ -413,7 +422,7 @@ export class PrivateJtcInteractionManager {
 
       await this.service.setRoomLimit(channel, limit, interaction.user.id);
       await interaction.reply({
-        content: `<:${emojis.success}> User limit set to **${limit === 0 ? "Unlimited" : limit}**.`,
+        content: `${this.emoji("success", interaction)} User limit set to **${limit === 0 ? "Unlimited" : limit}**.`,
         ephemeral: true,
       });
     }
@@ -427,7 +436,6 @@ export class PrivateJtcInteractionManager {
     channel: VoiceChannel,
   ): Promise<void> {
     const customId: string = interaction.customId;
-    const { emojis } = this.config;
 
     if (customId === "pjtc:trust_select") {
       const selectedUserIds: string[] = interaction.values;
@@ -437,7 +445,7 @@ export class PrivateJtcInteractionManager {
         interaction.user.id,
       );
       await interaction.reply({
-        content: `<:${emojis.success}> Successfully trusted **${added.length}** member(s).`,
+        content: `${this.emoji("success", interaction)} Successfully trusted **${added.length}** member(s).`,
         ephemeral: true,
       });
       return;
@@ -447,7 +455,7 @@ export class PrivateJtcInteractionManager {
       const newOwnerId = interaction.values[0];
       if (newOwnerId === interaction.user.id) {
         await interaction.reply({
-          content: `<:${emojis.cross}> You are already the owner of this room.`,
+          content: `${this.emoji("cross", interaction)} You are already the owner of this room.`,
           ephemeral: true,
         });
         return;
@@ -456,12 +464,12 @@ export class PrivateJtcInteractionManager {
       const ok = await this.service.transferOwnership(channel, newOwnerId);
       if (ok) {
         await interaction.reply({
-          content: `<:${emojis.transfer}> Transferred ownership of this room to <@${newOwnerId}>.`,
+          content: `${this.emoji("transfer", interaction)} Transferred ownership of this room to <@${newOwnerId}>.`,
           ephemeral: true,
         });
       } else {
         await interaction.reply({
-          content: `<:${emojis.cross}> Failed to transfer ownership.`,
+          content: `${this.emoji("cross", interaction)} Failed to transfer ownership.`,
           ephemeral: true,
         });
       }
@@ -476,7 +484,6 @@ export class PrivateJtcInteractionManager {
     channel: VoiceChannel,
   ): Promise<void> {
     const customId: string = interaction.customId;
-    const { emojis } = this.config;
 
     if (customId.startsWith("pjtc:untrust_select")) {
       const selectedUserIds: string[] = interaction.values;
@@ -486,7 +493,7 @@ export class PrivateJtcInteractionManager {
         interaction.user.id,
       );
       await interaction.reply({
-        content: `<:${emojis.success}> Successfully untrusted **${removed.length}** member(s).`,
+        content: `${this.emoji("success", interaction)} Successfully untrusted **${removed.length}** member(s).`,
         ephemeral: true,
       });
       return;
@@ -501,12 +508,12 @@ export class PrivateJtcInteractionManager {
       );
       if (ok) {
         await interaction.reply({
-          content: `<:${emojis.kick}> Successfully disconnected <@${targetUserId}> from the room.`,
+          content: `${this.emoji("kick", interaction)} Successfully disconnected <@${targetUserId}> from the room.`,
           ephemeral: true,
         });
       } else {
         await interaction.reply({
-          content: `<:${emojis.cross}> Failed to kick member from voice.`,
+          content: `${this.emoji("cross", interaction)} Failed to kick member from voice.`,
           ephemeral: true,
         });
       }

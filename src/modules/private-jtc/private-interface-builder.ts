@@ -8,11 +8,13 @@ import {
   EmbedBuilder,
   StringSelectMenuBuilder,
   type BaseMessageOptions,
+  type Client,
 } from "discord.js";
 import type {
   PrivateJtcConfig,
   PrivateJtcEmojisConfig,
 } from "../../../config/private-jtc/private-jtc.config.js";
+import { formatEmoji, resolveButtonEmoji } from "./private-emoji-helper.js";
 
 export const UNTRUST_PAGE_SIZE = 25;
 
@@ -29,6 +31,7 @@ export interface TrustedUserDisplay {
  */
 export const buildPrivateInterfaceMessage = (
   config: PrivateJtcConfig,
+  client?: Client | null,
 ): BaseMessageOptions => {
   const resolvedImagePath = path.isAbsolute(config.interfaceImagePath)
     ? config.interfaceImagePath
@@ -52,19 +55,19 @@ export const buildPrivateInterfaceMessage = (
     new ButtonBuilder()
       .setCustomId("pjtc:rename")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.rename),
+      .setEmoji(resolveButtonEmoji("rename", emojis.rename, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:limit")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.limit),
+      .setEmoji(resolveButtonEmoji("limit", emojis.limit, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:lock")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.lock),
+      .setEmoji(resolveButtonEmoji("lock", emojis.lock, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:unlock")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.unlock),
+      .setEmoji(resolveButtonEmoji("unlock", emojis.unlock, client)),
   );
 
   // Row 2: Hide, Unhide, Chat, Trust
@@ -72,19 +75,19 @@ export const buildPrivateInterfaceMessage = (
     new ButtonBuilder()
       .setCustomId("pjtc:hide")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.hide),
+      .setEmoji(resolveButtonEmoji("hide", emojis.hide, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:unhide")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.unhide),
+      .setEmoji(resolveButtonEmoji("unhide", emojis.unhide, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:chat")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.chat),
+      .setEmoji(resolveButtonEmoji("chat", emojis.chat, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:trust")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.trust),
+      .setEmoji(resolveButtonEmoji("trust", emojis.trust, client)),
   );
 
   // Row 3: Untrust, Transfer, Invite, Kick
@@ -92,19 +95,19 @@ export const buildPrivateInterfaceMessage = (
     new ButtonBuilder()
       .setCustomId("pjtc:untrust")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.untrust),
+      .setEmoji(resolveButtonEmoji("untrust", emojis.untrust, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:transfer")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.transfer),
+      .setEmoji(resolveButtonEmoji("transfer", emojis.transfer, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:invite")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.invite),
+      .setEmoji(resolveButtonEmoji("invite", emojis.invite, client)),
     new ButtonBuilder()
       .setCustomId("pjtc:kick")
       .setStyle(ButtonStyle.Secondary)
-      .setEmoji(emojis.kick),
+      .setEmoji(resolveButtonEmoji("kick", emojis.kick, client)),
   );
 
   return {
@@ -127,10 +130,11 @@ export const buildUntrustPaginationPayload = (
   trustedUsers: TrustedUserDisplay[],
   page = 1,
   emojis: PrivateJtcEmojisConfig,
+  client?: Client | null,
 ): UntrustPaginationPayload => {
   if (trustedUsers.length === 0) {
     return {
-      content: `<:${emojis.cross}> No members are currently trusted in this room.`,
+      content: `${formatEmoji("cross", emojis.cross, client)} No members are currently trusted in this room.`,
       components: [],
     };
   }
@@ -190,7 +194,7 @@ export const buildUntrustPaginationPayload = (
   }
 
   return {
-    content: `<:${emojis.untrust}> Select member(s) to untrust (Total: ${trustedUsers.length} trusted, Page ${currentPage}/${totalPages}):`,
+    content: `${formatEmoji("untrust", emojis.untrust, client)} Select member(s) to untrust (Total: ${trustedUsers.length} trusted, Page ${currentPage}/${totalPages}):`,
     components,
   };
 };
