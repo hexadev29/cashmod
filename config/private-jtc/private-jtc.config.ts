@@ -82,7 +82,7 @@ export const buildPrivateJtcConfig = (
         : 250,
       maxQueueSize: 100,
       taskTimeoutMs: 15000,
-      enableEmptyRoomRecycling: true,
+      enableEmptyRoomRecycling: false,
     },
     emojis: {
       untrust: env.EMOJI_UNTRUST_ID ?? defaultPrivateJtcEmojis.untrust,

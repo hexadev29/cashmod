@@ -6,18 +6,29 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class RoomCleanupHandler {
   private log = logger.child({ subsystem: "JtcCleanup" });
+  private readonly inFlightCleanups = new Set<string>();
   private readonly cancelledChannels = new Set<string>();
 
   constructor(private readonly config: JtcCleanupConfig) {}
 
   /**
-   * Cancels any pending or delayed cleanup for the specified channel ID.
-   * Call this when a room is recycled/adopted by a new join before it is deleted.
+   * Cancels any pending or delayed cleanup currently in flight for the specified channel ID.
+   * Call this when a room gains members or is reused before it is deleted.
    */
   public cancelPendingCleanup(channelId: string): boolean {
-    this.cancelledChannels.add(channelId);
-    this.log.debug(`Cancelled pending cleanup for channel ${channelId}`);
-    return true;
+    if (this.inFlightCleanups.has(channelId)) {
+      this.cancelledChannels.add(channelId);
+      this.log.debug(`Cancelled pending in-flight cleanup for channel ${channelId}`);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Returns whether a delayed cleanup is currently in flight for the given channel.
+   */
+  public isCleanupPending(channelId: string): boolean {
+    return this.inFlightCleanups.has(channelId);
   }
 
   /**
@@ -30,14 +41,6 @@ export class RoomCleanupHandler {
     if (!channel || channel.deletable === false) {
       this.log.debug(
         `Channel ${channel?.id ?? "unknown"} is not deletable or missing.`,
-      );
-      return false;
-    }
-
-    if (this.cancelledChannels.has(channel.id)) {
-      this.cancelledChannels.delete(channel.id);
-      this.log.info(
-        `Aborting cleanup for room "${channel.name}" (${channel.id}): room was adopted/recycled.`,
       );
       return false;
     }
@@ -57,24 +60,27 @@ export class RoomCleanupHandler {
       return false;
     }
 
-    const delayMs =
-      this.config.delayMs ?? (this.config as any).emptyChannelDeleteDelayMs ?? 0;
-    const maxRetries = this.config.maxRetries ?? 3;
-    const retryDelayMs = this.config.retryDelayMs ?? 500;
-    const recheckEmpty = this.config.recheckEmpty ?? false;
+    this.inFlightCleanups.add(channel.id);
+    this.cancelledChannels.delete(channel.id);
 
-    // Delay before recheck
-    if (delayMs > 0) {
-      await sleep(delayMs);
-    }
+    try {
+      const delayMs =
+        this.config.delayMs ?? (this.config as any).emptyChannelDeleteDelayMs ?? 0;
+      const maxRetries = this.config.maxRetries ?? 3;
+      const retryDelayMs = this.config.retryDelayMs ?? 500;
+      const recheckEmpty = this.config.recheckEmpty ?? false;
 
-    if (this.cancelledChannels.has(channel.id)) {
-      this.cancelledChannels.delete(channel.id);
-      this.log.info(
-        `Aborting cleanup for room "${channel.name}" (${channel.id}) after delay: room was adopted/recycled.`,
-      );
-      return false;
-    }
+      // Delay before recheck
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+
+      if (this.cancelledChannels.has(channel.id)) {
+        this.log.info(
+          `Aborting cleanup for room "${channel.name}" (${channel.id}) after delay: room gained members or cleanup was cancelled.`,
+        );
+        return false;
+      }
 
     // Recheck emptiness if configured
     if (recheckEmpty) {
@@ -137,5 +143,9 @@ export class RoomCleanupHandler {
     }
 
     return false;
+  } finally {
+    this.inFlightCleanups.delete(channel.id);
+    this.cancelledChannels.delete(channel.id);
   }
+}
 }

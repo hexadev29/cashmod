@@ -30,8 +30,6 @@ export class PrivateJtcService {
   private readonly managedRooms = new Map<string, PrivateJtcRoomRecord>();
   private readonly userProfiles = new Map<string, PrivateJtcUserProfile>();
   private readonly transferTimers = new Map<string, NodeJS.Timeout>();
-  private readonly reservedChannelIds = new Set<string>();
-  private readonly reservedChannelOwners = new Map<string, string>();
   private readonly asyncLock = new AsyncLock();
   private readonly stateStore: PrivateJtcStateStore;
   private readonly categoryManager: PrivateCategoryManager;
@@ -105,10 +103,7 @@ export class PrivateJtcService {
   }
 
   public isEligiblePrivateChannel(channel: VoiceChannel): boolean {
-    if (
-      this.managedRooms.has(channel.id) ||
-      this.reservedChannelIds.has(channel.id)
-    ) {
+    if (this.managedRooms.has(channel.id)) {
       return true;
     }
     const catId = this.categoryManager.getCategoryId();
@@ -359,136 +354,6 @@ export class PrivateJtcService {
           chatDisabled: savedProfile?.chatDisabled ?? false,
         });
 
-      // Check if an empty managed private room exists to recycle (burst rate limit protection)
-      const enableRecycling =
-        this.config.privateJtc.queue?.enableEmptyRoomRecycling ?? true;
-
-      if (enableRecycling) {
-        try {
-          const allChannels = await member.guild.channels.fetch();
-          const emptyCandidates: VoiceChannel[] = [];
-          for (const [, ch] of allChannels) {
-            if (
-              ch &&
-              ch.type === ChannelType.GuildVoice &&
-              ch.parentId === targetCategoryId &&
-              !this.reservedChannelIds.has(ch.id)
-            ) {
-              const voiceCh = ch as VoiceChannel;
-              if ((voiceCh.members?.size ?? 0) === 0) {
-                emptyCandidates.push(voiceCh);
-              }
-            }
-          }
-
-          if (emptyCandidates.length > 0) {
-            const recycledChannel = emptyCandidates[0];
-            this.reservedChannelIds.add(recycledChannel.id);
-            this.reservedChannelOwners.set(recycledChannel.id, member.id);
-
-            try {
-              this.log.info(
-                `Recycling empty private room "${recycledChannel.name}" for member "${member.user.tag}" (${member.id})`,
-              );
-
-              this.cleanupHandler.cancelPendingCleanup(recycledChannel.id);
-              this.queue.cancelByTag(`private-leave:${recycledChannel.id}`);
-
-              if (recycledChannel.name !== roomName) {
-                await recycledChannel
-                  .setName(roomName, "Private JTC room recycling rename")
-                  .catch(() => {});
-              }
-
-              if (recycledChannel.userLimit !== roomLimit) {
-                await recycledChannel
-                  .setUserLimit(roomLimit, "Private JTC room recycling limit")
-                  .catch(() => {});
-              }
-
-              if (
-                recycledChannel.permissionOverwrites &&
-                typeof (recycledChannel.permissionOverwrites as any).set ===
-                  "function"
-              ) {
-                await (recycledChannel.permissionOverwrites as any)
-                  .set(permissionOverwrites)
-                  .catch(() => {});
-              }
-
-              try {
-                await member.voice.setChannel(
-                  recycledChannel,
-                  "Moved to recycled Private JTC voice room",
-                );
-                this.log.debug(
-                  `Moved member "${member.user.tag}" (${member.id}) into recycled private room "${recycledChannel.name}" (${recycledChannel.id})`,
-                );
-              } catch (moveErr: any) {
-                this.log.warn(
-                  `Failed to move member "${member.user.tag}" into recycled private room ${recycledChannel.id}: ${moveErr?.message}`,
-                );
-              }
-
-              const now = new Date().toISOString();
-              const record: PrivateJtcRoomRecord = {
-                channelId: recycledChannel.id,
-                guildId: member.guild.id,
-                categoryId: targetCategoryId,
-                ownerId: member.id,
-                originalOwnerId: member.id,
-                isTransferred: false,
-                createdAt: now,
-                joinHistory: [
-                  {
-                    userId: member.id,
-                    joinedAt: now,
-                  },
-                ],
-                trustedUserIds: savedProfile?.trustedUserIds
-                  ? [...savedProfile.trustedUserIds]
-                  : [],
-                settings: {
-                  name: roomName,
-                  userLimit: roomLimit,
-                  locked: savedProfile?.locked ?? false,
-                  hidden: savedProfile?.hidden ?? false,
-                  chatDisabled: savedProfile?.chatDisabled ?? false,
-                },
-              };
-
-              if (typeof (recycledChannel as any).send === "function") {
-                try {
-                  const interfacePayload = buildPrivateInterfaceMessage(
-                    this.config.privateJtc,
-                  );
-                  const interfaceMsg = await (recycledChannel as any).send(
-                    interfacePayload,
-                  );
-                  record.interfaceMessageId = interfaceMsg?.id;
-                } catch (msgErr: any) {
-                  this.log.warn(
-                    `Failed to send private interface message to ${recycledChannel.id}: ${msgErr?.message}`,
-                  );
-                }
-              }
-
-              this.managedRooms.set(recycledChannel.id, record);
-              await this.saveCurrentState(member.guild.id);
-
-              return record;
-            } finally {
-              this.reservedChannelIds.delete(recycledChannel.id);
-              this.reservedChannelOwners.delete(recycledChannel.id);
-            }
-          }
-        } catch (recycleErr: any) {
-          this.log.warn(
-            `Error checking empty room candidates in private JTC: ${recycleErr?.message}. Falling back to creation.`,
-          );
-        }
-      }
-
       this.log.info(
         `Creating private room "${roomName}" in dynamic category (${targetCategoryId}) for owner "${member.user.tag}" (${member.id}) (restored profile: ${Boolean(savedProfile)})`,
       );
@@ -587,19 +452,28 @@ export class PrivateJtcService {
       return;
     }
 
-    // Cancel any pending cleanup for this channel immediately
-    this.cleanupHandler.cancelPendingCleanup(channel.id);
-    this.queue.cancelByTag(`private-leave:${channel.id}`);
+    // Cancel any in-flight cleanup for this channel if a member entered during delay
+    if (this.cleanupHandler.isCleanupPending(channel.id)) {
+      this.cleanupHandler.cancelPendingCleanup(channel.id);
+      this.queue.cancelByTag(`private-leave:${channel.id}`);
+    }
 
     const record = this.managedRooms.get(channel.id);
 
-    // 1. Check reservation collision
-    const reservedFor = this.reservedChannelOwners.get(channel.id);
-    const isReservedForOther =
-      reservedFor !== undefined && reservedFor !== member.id;
+    // 1. If unmanaged room in private category, relocate member to their own private room
+    if (!record) {
+      this.log.info(
+        `Direct join into unmanaged private category channel "${channel.name}" by member "${member.user.tag}" (${member.id}). Relocating to dedicated private room.`,
+      );
+      await this.handleVoiceJoin(
+        member,
+        this.config.privateJtc.triggerChannelId,
+      );
+      return;
+    }
 
     // 2. Check over-capacity collision
-    const capacityLimit = record?.settings?.userLimit ?? channel.userLimit ?? 0;
+    const capacityLimit = record.settings?.userLimit ?? channel.userLimit ?? 0;
     const isMemberInCache =
       typeof (channel.members as any)?.has === "function"
         ? (channel.members as any).has(member.id)
@@ -610,104 +484,13 @@ export class PrivateJtcService {
 
     const isOverCapacity = capacityLimit > 0 && currentMembers > capacityLimit;
 
-    if (isReservedForOther || isOverCapacity) {
+    if (isOverCapacity) {
       this.log.info(
-        `Direct join conflict detected in private room "${channel.name}" (${currentMembers}/${capacityLimit}, reservedForOther=${isReservedForOther}) for member "${member.user.tag}" (${member.id}). Relocating member to separate private room.`,
+        `Direct join over-capacity detected in private room "${channel.name}" (${currentMembers}/${capacityLimit}) for member "${member.user.tag}" (${member.id}). Relocating member to separate private room.`,
       );
       await this.handleVoiceJoin(
         member,
         this.config.privateJtc.triggerChannelId,
-      );
-      return;
-    }
-
-    // 3. If unmanaged room or adopting empty room
-    if (!record) {
-      await this.ensureProfilesLoaded(channel.guild.id);
-      const savedProfile = this.userProfiles.get(member.id);
-      const roomName =
-        savedProfile?.customName && savedProfile.customName.trim().length > 0
-          ? savedProfile.customName.trim()
-          : this.config.privateJtc.roomNameTemplate.replace(
-              "{username}",
-              member.user.username,
-            );
-      const roomLimit = savedProfile?.userLimit ?? 0;
-
-      const permissionOverwrites =
-        this.permissionService.buildPrivateJtcRoomOverwrites({
-          guildId: channel.guild.id,
-          ownerId: member.id,
-          trustedUserIds: savedProfile?.trustedUserIds ?? [],
-          locked: savedProfile?.locked ?? false,
-          hidden: savedProfile?.hidden ?? false,
-          chatDisabled: savedProfile?.chatDisabled ?? false,
-        });
-
-      if (channel.name !== roomName) {
-        await channel
-          .setName(roomName, "Private JTC adoption rename")
-          .catch(() => {});
-      }
-      if (channel.userLimit !== roomLimit) {
-        await channel
-          .setUserLimit(roomLimit, "Private JTC adoption limit")
-          .catch(() => {});
-      }
-      if (
-        channel.permissionOverwrites &&
-        typeof (channel.permissionOverwrites as any).set === "function"
-      ) {
-        await (channel.permissionOverwrites as any)
-          .set(permissionOverwrites)
-          .catch(() => {});
-      }
-
-      const now = new Date().toISOString();
-      const adoptedRecord: PrivateJtcRoomRecord = {
-        channelId: channel.id,
-        guildId: channel.guild.id,
-        categoryId: channel.parentId ?? "",
-        ownerId: member.id,
-        originalOwnerId: member.id,
-        isTransferred: false,
-        createdAt: now,
-        joinHistory: [
-          {
-            userId: member.id,
-            joinedAt: now,
-          },
-        ],
-        trustedUserIds: savedProfile?.trustedUserIds
-          ? [...savedProfile.trustedUserIds]
-          : [],
-        settings: {
-          name: roomName,
-          userLimit: roomLimit,
-          locked: savedProfile?.locked ?? false,
-          hidden: savedProfile?.hidden ?? false,
-          chatDisabled: savedProfile?.chatDisabled ?? false,
-        },
-      };
-
-      if (typeof (channel as any).send === "function") {
-        try {
-          const interfacePayload = buildPrivateInterfaceMessage(
-            this.config.privateJtc,
-          );
-          const interfaceMsg = await (channel as any).send(interfacePayload);
-          adoptedRecord.interfaceMessageId = interfaceMsg?.id;
-        } catch (msgErr: any) {
-          this.log.warn(
-            `Failed to send private interface message on adoption: ${msgErr?.message}`,
-          );
-        }
-      }
-
-      this.managedRooms.set(channel.id, adoptedRecord);
-      await this.saveCurrentState(channel.guild.id);
-      this.log.info(
-        `Adopted directly joined private room "${channel.name}" for member "${member.user.tag}" (${member.id})`,
       );
       return;
     }

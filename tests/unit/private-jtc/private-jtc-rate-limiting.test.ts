@@ -16,7 +16,7 @@ import { TaskPriority } from "../../../src/modules/jtc/jtc-queue.js";
 import path from "node:path";
 import fs from "node:fs";
 
-describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
+describe("Private JTC — Rate Limiting, Cleanup & No Recycling", () => {
   const guildId = "123456789012345678";
   const privateAnchorId = "123456789012345679";
   const privateTriggerId = "100000000000000005";
@@ -82,7 +82,7 @@ describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
       embedColor: 0x2b2d31,
       emojis: defaultPrivateJtcEmojis,
       cleanup: {
-        delayMs: 50,
+        delayMs: 30,
         recheckEmpty: true,
         maxRetries: 2,
         retryDelayMs: 10,
@@ -92,7 +92,7 @@ describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
         minTaskDelayMs: 0,
         maxQueueSize: 100,
         taskTimeoutMs: 15000,
-        enableEmptyRoomRecycling: true,
+        enableEmptyRoomRecycling: false,
       },
     },
   };
@@ -219,13 +219,13 @@ describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
     return { guild, channels };
   };
 
-  it("recycles an empty existing room during burst joins instead of creating a new channel", async () => {
+  it("never recycles empty rooms for private JTC, always creates fresh channels", async () => {
     const { guild, channels } = createMockGuild();
     vi.spyOn(categoryManager, "getOrCreateCategory").mockResolvedValue(
       dynamicCategoryId,
     );
 
-    // Pre-populate an empty private room in the dynamic category
+    // Pre-populate an empty channel in the dynamic category
     const existingEmptyChannel = createMockVoiceChannel({
       id: "vc-empty-1",
       name: "Old's Room",
@@ -247,28 +247,48 @@ describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
     const record = await service.handleVoiceJoin(bobMember, privateTriggerId);
 
     expect(record).not.toBeNull();
-    // Reused the existing channel ID!
-    expect(record?.channelId).toBe("vc-empty-1");
+    // A new channel was created via Discord API, NOT recycling existingEmptyChannel!
+    expect(record?.channelId).not.toBe("vc-empty-1");
     expect(record?.ownerId).toBe("owner-bob");
-
-    // Renamed to Bob's room
-    expect(existingEmptyChannel.setName).toHaveBeenCalledWith(
-      "Bob's Room",
-      "Private JTC room recycling rename",
-    );
-    expect(existingEmptyChannel.name).toBe("Bob's Room");
-
-    // Moved Bob into recycled channel
-    expect(bobMember.voice.setChannel).toHaveBeenCalledWith(
-      existingEmptyChannel,
-      "Moved to recycled Private JTC voice room",
-    );
-
-    // No new channel was created via Discord API
-    expect(guild.channels.create).not.toHaveBeenCalled();
+    expect(guild.channels.create).toHaveBeenCalled();
   });
 
-  it("cancels pending delayed cleanup when a room is recycled before deletion", async () => {
+  it("does not abort cleanup when user leaves and no one rejoined (fixes stale cancellation bug)", async () => {
+    const { guild, channels } = createMockGuild();
+    vi.spyOn(categoryManager, "getOrCreateCategory").mockResolvedValue(
+      dynamicCategoryId,
+    );
+
+    // User joins trigger -> room is created
+    const hexaMember: any = {
+      id: "owner-hexa",
+      user: { tag: "hexa.dev#0001", username: "hexa.dev" },
+      guild,
+      voice: { setChannel: vi.fn().mockResolvedValue(true) },
+    };
+
+    const record = await service.handleVoiceJoin(hexaMember, privateTriggerId);
+    expect(record).not.toBeNull();
+    const channelId = record!.channelId;
+    const channel = channels.get(channelId)!;
+
+    // Discord emits voiceStateUpdate moving member into the newly created room
+    channel.members.set(hexaMember.id, hexaMember);
+    await service.handleMemberJoin(hexaMember, channel);
+
+    // User talks for a while, then leaves the room
+    channel.members.delete(hexaMember.id);
+    await service.handleVoiceLeave(channel, hexaMember);
+
+    // Wait past the cleanup delay
+    await new Promise((resolve) => setTimeout(resolve, 60));
+
+    // Channel MUST be deleted because no one rejoined!
+    expect(channel.delete).toHaveBeenCalled();
+    expect(service.isManagedRoom(channelId)).toBe(false);
+  });
+
+  it("cancels pending delayed cleanup when a room is rejoined during delay window", async () => {
     const { guild, channels } = createMockGuild();
     vi.spyOn(categoryManager, "getOrCreateCategory").mockResolvedValue(
       dynamicCategoryId,
@@ -305,53 +325,55 @@ describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
       settings: { name: "Alice's Room", userLimit: 0, locked: false, hidden: false, chatDisabled: false },
     });
 
-    // Alice leaves -> delayed cleanup initiates (delayMs = 50ms)
+    // Alice leaves -> delayed cleanup initiates (delayMs = 30ms)
     aliceChannel.members.clear();
     const cleanupHandler = service.getCleanupHandler();
-    const cancelCleanupSpy = vi.spyOn(cleanupHandler, "cancelPendingCleanup");
 
     const leavePromise = service.handleVoiceLeave(aliceChannel, aliceMember);
 
-    // Before 50ms expires, Charlie joins the trigger!
-    const charlieMember: any = {
-      id: "owner-charlie",
-      user: { tag: "Charlie#0003", username: "Charlie" },
+    // Wait a brief tick for async lock to acquire and inFlightCleanups to register
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Verify cleanup is in-flight
+    expect(cleanupHandler.isCleanupPending("vc-alice")).toBe(true);
+
+    // Before 30ms expires, friend joins the room directly!
+    const friendMember: any = {
+      id: "user-friend",
+      user: { tag: "Friend#0002", username: "Friend" },
       guild,
       voice: { setChannel: vi.fn().mockResolvedValue(true) },
     };
+    aliceChannel.members.set("user-friend", friendMember);
 
-    const record = await service.handleVoiceJoin(charlieMember, privateTriggerId);
-    expect(record?.channelId).toBe("vc-alice");
+    await service.handleMemberJoin(friendMember, aliceChannel);
 
-    // Pending cleanup should have been cancelled for vc-alice
-    expect(cancelCleanupSpy).toHaveBeenCalledWith("vc-alice");
-
-    // Wait past the original 50ms cleanup delay to ensure deletion was truly cancelled
+    // Wait past the original 30ms cleanup delay
     await leavePromise;
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
+    // Deletion should have been aborted because friend rejoined!
     expect(aliceChannel.delete).not.toHaveBeenCalled();
     expect(service.isManagedRoom("vc-alice")).toBe(true);
   });
 
-  it("handles reservation collision: relocates user who clicks into a room reserved for another member", async () => {
+  it("handles unmanaged room direct join by relocating member to their own private room", async () => {
     const { guild, channels } = createMockGuild();
     vi.spyOn(categoryManager, "getOrCreateCategory").mockResolvedValue(
       dynamicCategoryId,
     );
+    vi.spyOn(categoryManager, "getCategoryId").mockReturnValue(
+      dynamicCategoryId,
+    );
 
-    const reservedChannel = createMockVoiceChannel({
-      id: "vc-reserved",
-      name: "Reserved Room",
+    const unmanagedChannel = createMockVoiceChannel({
+      id: "vc-unmanaged",
+      name: "Unmanaged Room",
       userLimit: 0,
       parentId: dynamicCategoryId,
       guild,
     });
-    channels.set("vc-reserved", reservedChannel);
-
-    // Reserve for user-A
-    (service as any).reservedChannelIds.add("vc-reserved");
-    (service as any).reservedChannelOwners.set("vc-reserved", "user-a");
+    channels.set("vc-unmanaged", unmanagedChannel);
 
     const intruderMember: any = {
       id: "user-intruder",
@@ -362,8 +384,8 @@ describe("Private JTC — Rate Limiting, Cleanup & Burst Protection", () => {
 
     const handleVoiceJoinSpy = vi.spyOn(service, "handleVoiceJoin");
 
-    // Intruder directly joins the reserved room
-    await service.handleMemberJoin(intruderMember, reservedChannel);
+    // Intruder directly joins the unmanaged room
+    await service.handleMemberJoin(intruderMember, unmanagedChannel);
 
     // Intruder should be relocated via handleVoiceJoin to trigger channel
     expect(handleVoiceJoinSpy).toHaveBeenCalledWith(
