@@ -32,6 +32,8 @@ export const defaultPrivateJtcEmojis: PrivateJtcEmojisConfig = {
   chat: "1560263520803758120",
 };
 
+import type { JtcCleanupConfig, JtcQueueConfig } from "../jtc/jtc.config.js";
+
 export interface PrivateJtcConfig {
   anchorCategoryId: string;
   triggerChannelId: string;
@@ -42,6 +44,8 @@ export interface PrivateJtcConfig {
   interfaceImagePath: string;
   embedColor: number;
   emojis: PrivateJtcEmojisConfig;
+  cleanup?: JtcCleanupConfig;
+  queue?: JtcQueueConfig;
 }
 
 export const buildPrivateJtcConfig = (
@@ -63,6 +67,23 @@ export const buildPrivateJtcConfig = (
     embedColor: env.JTC_PRIVATE_EMBED_COLOR
       ? parseInt(env.JTC_PRIVATE_EMBED_COLOR, 16)
       : 0x2b2d31,
+    cleanup: {
+      delayMs: env.JTC_PRIVATE_CLEANUP_DELAY_MS
+        ? parseInt(env.JTC_PRIVATE_CLEANUP_DELAY_MS, 10)
+        : 1000,
+      recheckEmpty: true,
+      maxRetries: 3,
+      retryDelayMs: 500,
+    },
+    queue: {
+      concurrency: 1,
+      minTaskDelayMs: env.JTC_PRIVATE_QUEUE_DELAY_MS
+        ? parseInt(env.JTC_PRIVATE_QUEUE_DELAY_MS, 10)
+        : 250,
+      maxQueueSize: 100,
+      taskTimeoutMs: 15000,
+      enableEmptyRoomRecycling: true,
+    },
     emojis: {
       untrust: env.EMOJI_UNTRUST_ID ?? defaultPrivateJtcEmojis.untrust,
       unlock: env.EMOJI_UNLOCK_ID ?? defaultPrivateJtcEmojis.unlock,

@@ -27,7 +27,7 @@ export class RoomCleanupHandler {
     channel: VoiceChannel,
     isEligibleCallback: (ch: VoiceChannel) => boolean,
   ): Promise<boolean> {
-    if (!channel || !channel.deletable) {
+    if (!channel || channel.deletable === false) {
       this.log.debug(
         `Channel ${channel?.id ?? "unknown"} is not deletable or missing.`,
       );
@@ -57,9 +57,15 @@ export class RoomCleanupHandler {
       return false;
     }
 
+    const delayMs =
+      this.config.delayMs ?? (this.config as any).emptyChannelDeleteDelayMs ?? 0;
+    const maxRetries = this.config.maxRetries ?? 3;
+    const retryDelayMs = this.config.retryDelayMs ?? 500;
+    const recheckEmpty = this.config.recheckEmpty ?? false;
+
     // Delay before recheck
-    if (this.config.delayMs > 0) {
-      await sleep(this.config.delayMs);
+    if (delayMs > 0) {
+      await sleep(delayMs);
     }
 
     if (this.cancelledChannels.has(channel.id)) {
@@ -71,12 +77,12 @@ export class RoomCleanupHandler {
     }
 
     // Recheck emptiness if configured
-    if (this.config.recheckEmpty) {
+    if (recheckEmpty) {
       try {
         const freshChannel = (await channel.guild.channels.fetch(
           channel.id,
         )) as VoiceChannel | null;
-        if (!freshChannel || !freshChannel.isVoiceBased()) {
+        if (!freshChannel || (typeof (freshChannel as any).isVoiceBased === "function" ? !(freshChannel as any).isVoiceBased() : false)) {
           this.log.debug(`Channel ${channel.id} was already removed.`);
           return true;
         }
@@ -100,7 +106,7 @@ export class RoomCleanupHandler {
 
     // Attempt deletion with bounded retries
     let attempts = 0;
-    while (attempts <= this.config.maxRetries) {
+    while (attempts <= maxRetries) {
       try {
         await channel.delete("Cash Mod JTC empty room cleanup");
         this.log.info(
@@ -114,7 +120,7 @@ export class RoomCleanupHandler {
         }
 
         attempts++;
-        if (attempts > this.config.maxRetries) {
+        if (attempts > maxRetries) {
           this.log.error(
             `Exhausted retries deleting empty channel "${channel.name}" (${channel.id}): ${err?.message}`,
             { channelId: channel.id, attempts },
@@ -124,9 +130,9 @@ export class RoomCleanupHandler {
         }
 
         this.log.warn(
-          `Retry ${attempts}/${this.config.maxRetries} deleting channel "${channel.name}" (${channel.id}) after error: ${err?.message}`,
+          `Retry ${attempts}/${maxRetries} deleting channel "${channel.name}" (${channel.id}) after error: ${err?.message}`,
         );
-        await sleep(this.config.retryDelayMs);
+        await sleep(retryDelayMs);
       }
     }
 

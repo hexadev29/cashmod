@@ -76,6 +76,19 @@ describe("Private JTC — User Profile Persistence & Restoration", () => {
       interfaceImagePath: "assets/vc_interface.png",
       embedColor: 0x2b2d31,
       emojis: defaultPrivateJtcEmojis,
+      cleanup: {
+        delayMs: 0,
+        recheckEmpty: false,
+        maxRetries: 2,
+        retryDelayMs: 0,
+      },
+      queue: {
+        concurrency: 1,
+        minTaskDelayMs: 0,
+        maxQueueSize: 100,
+        taskTimeoutMs: 15000,
+        enableEmptyRoomRecycling: true,
+      },
     },
   };
 
@@ -116,7 +129,7 @@ describe("Private JTC — User Profile Persistence & Restoration", () => {
     const overwrites = new Map<string, any>();
     const members = new Collection<string, GuildMember>();
 
-    return {
+    const channelObj: any = {
       id: opts.id,
       name: opts.name,
       userLimit: opts.userLimit ?? 0,
@@ -125,13 +138,21 @@ describe("Private JTC — User Profile Persistence & Restoration", () => {
       guild: opts.guild,
       members,
       setName: vi.fn().mockImplementation(async (n: string) => {
+        channelObj.name = n;
         opts.name = n;
       }),
       setUserLimit: vi.fn().mockImplementation(async (l: number) => {
+        channelObj.userLimit = l;
         opts.userLimit = l;
       }),
       permissionOverwrites: {
         cache: overwrites,
+        set: vi.fn().mockImplementation(async (newOverwrites: any[]) => {
+          overwrites.clear();
+          for (const o of newOverwrites) {
+            overwrites.set(o.id, o);
+          }
+        }),
         edit: vi.fn().mockImplementation(async (target: any, perms: any) => {
           const id = typeof target === "string" ? target : target.id;
           overwrites.set(id, { id, ...perms });
@@ -140,9 +161,14 @@ describe("Private JTC — User Profile Persistence & Restoration", () => {
           overwrites.delete(id);
         }),
       },
-      delete: vi.fn().mockResolvedValue(true),
+      delete: vi.fn().mockImplementation(async () => {
+        opts.guild.channels?.cache?.delete(opts.id);
+        return true;
+      }),
       send: vi.fn().mockResolvedValue({ id: "msg-1" }),
-    } as unknown as VoiceChannel;
+    };
+
+    return channelObj as unknown as VoiceChannel;
   };
 
   const createMockGuild = () => {

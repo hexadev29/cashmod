@@ -77,6 +77,19 @@ describe("PrivateJtcService", () => {
       roomNameTemplate: "{username}'s Room",
       ownershipTransferDelayMs: 15 * 60 * 1000, // 15 mins
       stateFilePath: testStatePath,
+      cleanup: {
+        delayMs: 0,
+        recheckEmpty: false,
+        maxRetries: 2,
+        retryDelayMs: 0,
+      },
+      queue: {
+        concurrency: 1,
+        minTaskDelayMs: 0,
+        maxQueueSize: 100,
+        taskTimeoutMs: 15000,
+        enableEmptyRoomRecycling: true,
+      },
     },
   };
 
