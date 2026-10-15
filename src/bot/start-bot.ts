@@ -5,6 +5,8 @@ import { loadConfig } from "../core/config/load-config.js";
 import { PermissionService } from "../core/permissions/permission-service.js";
 import { JtcService } from "../modules/jtc/jtc-service.js";
 import { setJtcService } from "../modules/jtc/jtc-instance.js";
+import { PrivateJtcService } from "../modules/private-jtc/private-jtc-service.js";
+import { setPrivateJtcService } from "../modules/private-jtc/private-jtc-instance.js";
 import { createClient } from "./create-client.js";
 import { loadAndRegisterHandlers } from "../handlers/loader/register-handlers.js";
 import { logger } from "../diagnostics/logger.js";
@@ -16,6 +18,7 @@ import {
 export interface StartBotResult {
   client: Client;
   jtcService: JtcService;
+  privateJtcService: PrivateJtcService;
 }
 
 export const startBot = async (): Promise<StartBotResult> => {
@@ -42,6 +45,15 @@ export const startBot = async (): Promise<StartBotResult> => {
   );
   const jtcService = new JtcService(config, permissionService);
   setJtcService(jtcService);
+
+  const privateJtcService = new PrivateJtcService(
+    config,
+    permissionService,
+    undefined,
+    undefined,
+    jtcService.getQueue(),
+  );
+  setPrivateJtcService(privateJtcService);
 
   // 4. Create Discord Client
   const client = createClient(config);
@@ -79,6 +91,11 @@ export const startBot = async (): Promise<StartBotResult> => {
       const reconResult = await jtcService.reconcile(targetGuild);
       logger.debug(
         `Reconciliation finished: scanned ${reconResult.totalScanned} room(s).`,
+      );
+
+      const privateReconResult = await privateJtcService.reconcile(targetGuild);
+      logger.debug(
+        `Private JTC Reconciliation finished: scanned ${privateReconResult.totalScanned} room(s).`,
       );
     } else {
       logger.warn(
@@ -131,5 +148,5 @@ export const startBot = async (): Promise<StartBotResult> => {
   logger.info("Connecting to Discord Gateway...");
   await client.login(config.env.token);
 
-  return { client, jtcService };
+  return { client, jtcService, privateJtcService };
 };

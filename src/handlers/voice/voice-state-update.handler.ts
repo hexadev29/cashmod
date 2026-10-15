@@ -1,6 +1,7 @@
 import type { VoiceState, VoiceChannel } from "discord.js";
 import type { EventHandler } from "../loader/loader-types.js";
 import { getJtcService } from "../../modules/jtc/jtc-instance.js";
+import { getPrivateJtcService } from "../../modules/private-jtc/private-jtc-instance.js";
 import { loadConfig } from "../../core/config/load-config.js";
 import { logger } from "../../diagnostics/logger.js";
 
@@ -34,6 +35,7 @@ export const voiceStateUpdateHandler: EventHandler<"voiceStateUpdate"> = {
     }
 
     const jtcService = getJtcService();
+    const privateJtcService = getPrivateJtcService();
     if (!jtcService) {
       log.warn(
         "Received voice state transition before JtcService was initialized; skipping.",
@@ -44,7 +46,22 @@ export const voiceStateUpdateHandler: EventHandler<"voiceStateUpdate"> = {
     // A. Handle leave or move from old channel
     if (oldChannelId && oldState.channel && oldState.channel.isVoiceBased()) {
       try {
-        await jtcService.queueVoiceLeave(oldState.channel as VoiceChannel);
+        if (
+          privateJtcService &&
+          privateJtcService.isEligiblePrivateChannel(
+            oldState.channel as VoiceChannel,
+          )
+        ) {
+          await privateJtcService.queueVoiceLeave(
+            oldState.channel as VoiceChannel,
+            member,
+          );
+        } else if (
+          jtcService.isManagedRoom(oldChannelId) ||
+          jtcService.isEligibleJtcChannel(oldState.channel as VoiceChannel)
+        ) {
+          await jtcService.queueVoiceLeave(oldState.channel as VoiceChannel);
+        }
       } catch (leaveErr: any) {
         log.error(
           `Error handling voice leave for channel ${oldChannelId}: ${leaveErr?.message}`,
@@ -57,8 +74,25 @@ export const voiceStateUpdateHandler: EventHandler<"voiceStateUpdate"> = {
     // B. Handle join or move to new channel
     if (newChannelId && newState.channel) {
       try {
-        if (config.jtc.triggers[newChannelId]) {
+        if (
+          privateJtcService &&
+          config.privateJtc &&
+          newChannelId === config.privateJtc.triggerChannelId
+        ) {
+          await privateJtcService.queueVoiceJoin(member, newChannelId);
+        } else if (config.jtc.triggers[newChannelId]) {
           await jtcService.queueVoiceJoin(member, newChannelId);
+        } else if (
+          newState.channel.isVoiceBased() &&
+          privateJtcService &&
+          privateJtcService.isEligiblePrivateChannel(
+            newState.channel as VoiceChannel,
+          )
+        ) {
+          await privateJtcService.queueMemberJoin(
+            member,
+            newState.channel as VoiceChannel,
+          );
         } else if (
           newState.channel.isVoiceBased() &&
           jtcService.isEligibleJtcChannel(newState.channel as VoiceChannel)

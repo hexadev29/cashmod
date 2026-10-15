@@ -255,6 +255,47 @@ export const validateConfig = (config: AppConfig): void => {
     }
   }
 
+  // 10. Private JTC Validation
+  if (config.privateJtc) {
+    if (
+      !config.privateJtc.anchorCategoryId ||
+      !isSnowflake(config.privateJtc.anchorCategoryId)
+    ) {
+      errors.push({
+        field: "privateJtc.anchorCategoryId",
+        message: `privateJtc.anchorCategoryId must be a valid Discord snowflake, received: "${config.privateJtc.anchorCategoryId}".`,
+      });
+    }
+    if (
+      !config.privateJtc.triggerChannelId ||
+      !isSnowflake(config.privateJtc.triggerChannelId)
+    ) {
+      errors.push({
+        field: "privateJtc.triggerChannelId",
+        message: `privateJtc.triggerChannelId must be a valid Discord snowflake, received: "${config.privateJtc.triggerChannelId}".`,
+      });
+    }
+    if (
+      !config.privateJtc.categoryName ||
+      config.privateJtc.categoryName.trim().length === 0
+    ) {
+      errors.push({
+        field: "privateJtc.categoryName",
+        message: "privateJtc.categoryName cannot be empty.",
+      });
+    }
+    if (
+      typeof config.privateJtc.ownershipTransferDelayMs !== "number" ||
+      config.privateJtc.ownershipTransferDelayMs < 0
+    ) {
+      errors.push({
+        field: "privateJtc.ownershipTransferDelayMs",
+        message:
+          "privateJtc.ownershipTransferDelayMs must be a non-negative number.",
+      });
+    }
+  }
+
   if (errors.length > 0) {
     throw new ConfigValidationError(errors);
   }

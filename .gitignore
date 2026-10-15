@@ -13,6 +13,8 @@ dist/
 
 # Runtime State
 data/state/
+data/*.json
+data/*.tmp*
 
 # Logs and Diagnostics
 *.log

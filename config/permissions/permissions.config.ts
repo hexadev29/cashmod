@@ -20,6 +20,8 @@ export interface GlobalPermissionsConfig {
     vcRestricted?: RolePermissionPolicy;
     roomOwner?: RolePermissionPolicy;
     staff?: RolePermissionPolicy;
+    privateEveryone?: RolePermissionPolicy;
+    privateOwner?: RolePermissionPolicy;
   };
 }
 
@@ -97,6 +99,51 @@ export const buildPermissionsConfig = (
           PermissionFlagsBits.MuteMembers,
           PermissionFlagsBits.DeafenMembers,
           PermissionFlagsBits.MoveMembers,
+        ],
+        deny: [],
+      },
+      // Private JTC Policies
+      privateEveryone: {
+        allow: [
+          PermissionFlagsBits.Connect,
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.CreateInstantInvite,
+          PermissionFlagsBits.Speak,
+          PermissionFlagsBits.Stream,
+          PermissionFlagsBits.UseVAD,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.EmbedLinks,
+          PermissionFlagsBits.AttachFiles,
+          PermissionFlagsBits.AddReactions,
+          PermissionFlagsBits.ReadMessageHistory,
+          PermissionFlagsBits.SendVoiceMessages,
+          PermissionFlagsBits.UseEmbeddedActivities,
+          PermissionFlagsBits.UseApplicationCommands,
+          PermissionFlagsBits.UseExternalSounds,
+          PermissionFlagsBits.UseExternalEmojis,
+          PermissionFlagsBits.UseExternalStickers,
+          PermissionFlagsBits.SendTTSMessages,
+          PermissionFlagsBits.SendPolls,
+          PermissionFlagsBits.UseExternalApps,
+        ],
+        deny: [
+          PermissionFlagsBits.ManageChannels,
+          PermissionFlagsBits.ManageRoles,
+          PermissionFlagsBits.ManageWebhooks,
+          PermissionFlagsBits.MuteMembers,
+          PermissionFlagsBits.DeafenMembers,
+          PermissionFlagsBits.MoveMembers,
+          PermissionFlagsBits.MentionEveryone,
+          PermissionFlagsBits.ManageMessages,
+          PermissionFlagsBits.ManageEvents,
+          PermissionFlagsBits.CreateEvents,
+        ],
+      },
+      privateOwner: {
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.Connect,
+          PermissionFlagsBits.SendMessages,
         ],
         deny: [],
       },

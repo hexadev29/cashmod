@@ -1,7 +1,9 @@
 import {
   OverwriteType,
+  PermissionFlagsBits,
   type Guild,
   type OverwriteResolvable,
+  type VoiceChannel,
 } from "discord.js";
 import {
   permissionsConfig as defaultPermissionsConfig,
@@ -25,6 +27,12 @@ export interface JtcOverwriteOptions {
   staffRoleId?: string;
 }
 
+export interface PrivateJtcOverwriteOptions {
+  guildId: string;
+  ownerId: string;
+  roles?: JtcRoleIds;
+}
+
 export class PermissionService {
   constructor(
     private readonly permissionsConfig: GlobalPermissionsConfig,
@@ -32,7 +40,7 @@ export class PermissionService {
   ) {}
 
   /**
-   * Builds Discord channel permission overwrites for a temporary JTC voice room.
+   * Builds Discord channel permission overwrites for a temporary public JTC voice room.
    * Public JTC rooms do NOT have an owner system for users.
    * Overwrites are configured for @everyone and restricted roles (quarantine, super_focus, vc_restricted).
    */
@@ -133,7 +141,7 @@ export class PermissionService {
   }
 
   /**
-   * Helper method matching buildTempPermissionOverwrites(guild, roles?)
+   * Helper method matching buildTempPermissionOverwrites(guild, roles?) for public JTC
    */
   public buildTempPermissionOverwrites(
     guild:
@@ -145,7 +153,137 @@ export class PermissionService {
     const guildId = typeof guild === "string" ? guild : guild.id;
     return this.buildJtcRoomOverwrites({ guildId, roles });
   }
+
+  /**
+   * Builds Discord channel permission overwrites for a Private JTC room.
+   * Includes owner permissions for ownerId and private JTC @everyone policy.
+   */
+  public buildPrivateJtcRoomOverwrites(
+    options: PrivateJtcOverwriteOptions,
+  ): OverwriteResolvable[] {
+    const { guildId, ownerId, roles } = options;
+    const everyonePolicy =
+      this.permissionsConfig.policies.privateEveryone ??
+      this.permissionsConfig.policies.everyone;
+    const ownerPolicy =
+      this.permissionsConfig.policies.privateOwner ?? {
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.Connect,
+          PermissionFlagsBits.SendMessages,
+        ],
+        deny: [],
+      };
+
+    const overwrites: OverwriteResolvable[] = [];
+
+    // 1. @everyone role overwrite
+    overwrites.push({
+      id: guildId,
+      type: OverwriteType.Role,
+      allow: everyonePolicy.allow,
+      deny: everyonePolicy.deny,
+    });
+
+    // 2. Restricted moderation roles (quarantine, super_focus, vc_restricted)
+    const quarantineId =
+      roles?.quarantine ?? this.permissionsConfig.roles?.quarantineRoleId;
+    if (quarantineId && quarantineId.trim().length > 0) {
+      const policy = this.permissionsConfig.policies.quarantine;
+      if (policy) {
+        overwrites.push({
+          id: quarantineId,
+          type: OverwriteType.Role,
+          allow: policy.allow,
+          deny: policy.deny,
+        });
+      }
+    }
+
+    const superFocusId =
+      roles?.super_focus ?? this.permissionsConfig.roles?.superFocusRoleId;
+    if (superFocusId && superFocusId.trim().length > 0) {
+      const policy = this.permissionsConfig.policies.superFocus;
+      if (policy) {
+        overwrites.push({
+          id: superFocusId,
+          type: OverwriteType.Role,
+          allow: policy.allow,
+          deny: policy.deny,
+        });
+      }
+    }
+
+    const vcRestrictedId =
+      roles?.vc_restricted ?? this.permissionsConfig.roles?.vcRestrictedRoleId;
+    if (vcRestrictedId && vcRestrictedId.trim().length > 0) {
+      const policy = this.permissionsConfig.policies.vcRestricted;
+      if (policy) {
+        overwrites.push({
+          id: vcRestrictedId,
+          type: OverwriteType.Role,
+          allow: policy.allow,
+          deny: policy.deny,
+        });
+      }
+    }
+
+    // 3. Owner member overwrite
+    overwrites.push({
+      id: ownerId,
+      type: OverwriteType.Member,
+      allow: ownerPolicy.allow,
+      deny: ownerPolicy.deny,
+    });
+
+    return overwrites;
+  }
+
+  /**
+   * Dynamically toggles owner permissions on a private voice channel.
+   */
+  public async setOwnerPermissions(
+    channel: VoiceChannel,
+    userId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    return setOwnerPermissions(channel, userId, enabled);
+  }
 }
+
+/**
+ * Dynamically toggles owner permissions on a voice channel for a given user.
+ */
+export const setOwnerPermissions = async (
+  channel: VoiceChannel,
+  userId: string,
+  enabled: boolean,
+): Promise<void> => {
+  const overwrite = channel.permissionOverwrites.cache.get(userId);
+  const allow = new Set(overwrite?.allow?.toArray() || []);
+  const deny = new Set(overwrite?.deny?.toArray() || []);
+
+  const ownerPerms = [
+    "ViewChannel",
+    "Connect",
+    "SendMessages",
+  ] as const;
+
+  for (const perm of ownerPerms) {
+    deny.delete(perm);
+    if (enabled) {
+      allow.add(perm);
+    } else {
+      allow.delete(perm);
+    }
+  }
+
+  await channel.permissionOverwrites.edit(userId, {
+    ViewChannel: allow.has("ViewChannel"),
+    Connect: allow.has("Connect"),
+    SendMessages: allow.has("SendMessages"),
+  });
+};
 
 /**
  * Standalone helper function buildTempPermissionOverwrites(guild, roles?)

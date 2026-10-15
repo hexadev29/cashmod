@@ -4,6 +4,7 @@ import type { AppConfig } from "./config-types.js";
 import { buildDiscordConfig } from "../../../config/discord/discord.config.js";
 import { buildPermissionsConfig } from "../../../config/permissions/permissions.config.js";
 import { buildJtcConfig } from "../../../config/jtc/jtc.config.js";
+import { buildPrivateJtcConfig } from "../../../config/private-jtc/private-jtc.config.js";
 import { diagnosticsConfig } from "../../../config/diagnostics/diagnostics.config.js";
 import { validateConfig } from "./validate-config.js";
 import { registerSecret } from "../../diagnostics/redact-secrets.js";
@@ -41,6 +42,7 @@ export const loadConfig = (
     discord: buildDiscordConfig(envSource),
     permissions: buildPermissionsConfig(envSource),
     jtc: buildJtcConfig(envSource),
+    privateJtc: buildPrivateJtcConfig(envSource),
     diagnostics: {
       ...diagnosticsConfig,
       logLevel: (envSource.LOG_LEVEL as any) || diagnosticsConfig.logLevel,
