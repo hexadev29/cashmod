@@ -66,6 +66,10 @@ describe("CategoryManager", () => {
             name: opts.name,
             type: opts.type,
             position: opts.position,
+            isVoiceBased: () => opts.type === ChannelType.GuildVoice,
+            delete: vi.fn().mockImplementation(async () => {
+              mockChannels.delete(newId);
+            }),
           };
           mockChannels.set(newId, newChannel);
           return newChannel;
@@ -209,5 +213,39 @@ describe("CategoryManager", () => {
     await expect(manager.getOrCreateCategory(guild, "Solo")).rejects.toThrow(
       /Anchor category verification failed/,
     );
+  });
+
+  it("deletes empty category and clears state when no voice channels remain", async () => {
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
+    expect(manager.hasCategory("Solo")).toBe(true);
+
+    const deleted = await manager.deleteCategoryIfEmpty(guild, soloId);
+    expect(deleted).toBe(true);
+    expect(manager.hasCategory("Solo")).toBe(false);
+    expect(mockChannels.has(soloId)).toBe(false);
+    // State file is cleared when 0 categories remain
+    expect(fs.existsSync(testFilePath)).toBe(false);
+  });
+
+  it("does not delete category if active voice channels still remain in it", async () => {
+    const guild = createMockGuild();
+    await manager.initFromState(guild);
+    const soloId = await manager.getOrCreateCategory(guild, "Solo");
+
+    // Add an active voice room inside Solo category
+    mockChannels.set("voice-room-1", {
+      id: "voice-room-1",
+      name: "Solo #1",
+      type: ChannelType.GuildVoice,
+      parentId: soloId,
+      isVoiceBased: () => true,
+    });
+
+    const deleted = await manager.deleteCategoryIfEmpty(guild, soloId);
+    expect(deleted).toBe(false);
+    expect(manager.hasCategory("Solo")).toBe(true);
+    expect(mockChannels.has(soloId)).toBe(true);
   });
 });

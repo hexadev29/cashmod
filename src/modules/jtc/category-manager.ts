@@ -235,6 +235,65 @@ export class CategoryManager {
   }
 
   /**
+   * Checks if a managed dynamic category has no remaining voice channels,
+   * and deletes the category if empty.
+   */
+  public async deleteCategoryIfEmpty(
+    guild: Guild,
+    categoryId: string,
+  ): Promise<boolean> {
+    const categoryName = this.idToCategoryName.get(categoryId);
+    if (!categoryName) {
+      return false;
+    }
+
+    const release = await this.categoryLock.acquire(`cat:${categoryName}`);
+    try {
+      const guildChannels = await guild.channels.fetch();
+
+      // Check if any voice channels remain in this category
+      const remainingVoice = Array.from(guildChannels.values()).filter(
+        (ch) =>
+          ch != null &&
+          (typeof (ch as any).isVoiceBased === "function"
+            ? (ch as any).isVoiceBased()
+            : ch.type === ChannelType.GuildVoice) &&
+          ch.parentId === categoryId,
+      );
+
+      if (remainingVoice.length > 0) {
+        return false;
+      }
+
+      // No voice channels remain in this category; delete the category from Discord
+      const categoryChannel = guildChannels.get(categoryId);
+      if (categoryChannel) {
+        try {
+          await categoryChannel.delete("Cash Mod JTC empty category cleanup");
+          this.log.info(
+            `Deleted empty dynamic JTC category "${categoryName}" (${categoryId})`,
+          );
+        } catch (err: any) {
+          if (err?.code !== 10003) {
+            this.log.error(
+              `Failed to delete empty category "${categoryName}": ${err?.message}`,
+              undefined,
+              err,
+            );
+          }
+        }
+      }
+
+      this.categoryMap.delete(categoryName);
+      this.idToCategoryName.delete(categoryId);
+      await this.persistState(guild.id);
+      return true;
+    } finally {
+      release();
+    }
+  }
+
+  /**
    * Persists the current category mapping to disk.
    */
   private async persistState(guildId: string): Promise<void> {
@@ -244,6 +303,7 @@ export class CategoryManager {
     }
 
     if (Object.keys(stateToSave).length === 0) {
+      await this.stateStore.clearState();
       return;
     }
 

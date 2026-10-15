@@ -131,4 +131,19 @@ export class JtcStateStore {
       release();
     }
   }
+
+  /**
+   * Clears the state file when all dynamic categories have been deleted.
+   */
+  public async clearState(): Promise<void> {
+    const release = await this.writeLock.acquire("state-file");
+    try {
+      if (fs.existsSync(this.filePath)) {
+        await fs.promises.unlink(this.filePath);
+        this.log.debug(`Cleared state file at ${this.filePath}`);
+      }
+    } finally {
+      release();
+    }
+  }
 }

@@ -232,12 +232,14 @@ describe("JtcService", () => {
     expect(resA!.channel.name).not.toBe(resB!.channel.name);
   });
 
-  it("cleans up empty managed room on voice leave", async () => {
+  it("cleans up empty managed room on voice leave and deletes category if no rooms remain", async () => {
     const guild = createMockGuild();
     const member = createMockMember("m3", guild);
 
     const alloc = await service.handleVoiceJoin(member, "100000000000000001");
     expect(alloc).not.toBeNull();
+    const soloCatId = categoryManager.getCategoryId("Solo")!;
+    expect(soloCatId).toBeDefined();
 
     const channel = alloc!.channel as any;
     // Simulate member leaving -> size becomes 0
@@ -247,5 +249,43 @@ describe("JtcService", () => {
     expect(cleaned).toBe(true);
     expect(channel.delete).toHaveBeenCalled();
     expect(service.isManagedRoom(channel.id)).toBe(false);
+
+    // Dynamic category must also be deleted since 0 rooms remain in it
+    expect(categoryManager.hasCategory("Solo")).toBe(false);
+    expect(createdChannels.has(soloCatId)).toBe(false);
+  });
+
+  it("retains category while other rooms remain, and deletes category when last room leaves", async () => {
+    const guild = createMockGuild();
+    const memberA = createMockMember("mA", guild);
+    const memberB = createMockMember("mB", guild);
+
+    const allocA = await service.handleVoiceJoin(memberA, "100000000000000001");
+    const allocB = await service.handleVoiceJoin(memberB, "100000000000000001");
+    expect(allocA).not.toBeNull();
+    expect(allocB).not.toBeNull();
+
+    const soloCatId = categoryManager.getCategoryId("Solo")!;
+    expect(soloCatId).toBeDefined();
+
+    // Member A leaves room A
+    const channelA = allocA!.channel as any;
+    channelA.members.size = 0;
+    await service.handleVoiceLeave(channelA as VoiceChannel);
+
+    // Solo #1 is gone, but Solo #2 still remains!
+    expect(createdChannels.has(channelA.id)).toBe(false);
+    expect(categoryManager.hasCategory("Solo")).toBe(true);
+    expect(createdChannels.has(soloCatId)).toBe(true);
+
+    // Member B leaves room B
+    const channelB = allocB!.channel as any;
+    channelB.members.size = 0;
+    await service.handleVoiceLeave(channelB as VoiceChannel);
+
+    // Now all rooms are gone -> category is also deleted!
+    expect(createdChannels.has(channelB.id)).toBe(false);
+    expect(categoryManager.hasCategory("Solo")).toBe(false);
+    expect(createdChannels.has(soloCatId)).toBe(false);
   });
 });

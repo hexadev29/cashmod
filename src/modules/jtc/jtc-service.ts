@@ -245,11 +245,19 @@ export class JtcService {
       return false;
     }
 
+    const parentId = channel.parentId;
+    const guild = channel.guild;
+
     const cleaned = await this.cleanupHandler.cleanupChannel(channel, (ch) =>
       this.isEligibleJtcChannel(ch),
     );
     if (cleaned) {
       this.managedRooms.delete(channel.id);
+
+      // If the room was in a dynamic managed category, delete the category if no voice channels remain
+      if (parentId && this.categoryManager.isManagedCategory(parentId)) {
+        await this.categoryManager.deleteCategoryIfEmpty(guild, parentId);
+      }
     }
     return cleaned;
   }

@@ -78,6 +78,11 @@ export const reconcileJtcRooms = async (
         );
       }
     }
+
+    // Clean up any dynamic categories that ended up completely empty after startup room cleanup
+    for (const catId of categoryManager.getAllManagedCategoryIds()) {
+      await categoryManager.deleteCategoryIfEmpty(guild, catId);
+    }
   } catch (err: any) {
     log.error(
       `Error during JTC reconciliation: ${err?.message}`,
